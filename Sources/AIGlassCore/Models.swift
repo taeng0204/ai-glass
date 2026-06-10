@@ -41,8 +41,11 @@ public struct TokenEvent: Equatable, Sendable {
     public let outputTokens: Int
     public let cacheReadTokens: Int
     public let cacheCreationTokens: Int
+    /// 이벤트가 발생한 프로젝트 (cwd lastPathComponent). nil = 미파악.
+    public let project: String?
     public init(service: ServiceID, timestamp: Date, model: String,
-                inputTokens: Int, outputTokens: Int, cacheReadTokens: Int, cacheCreationTokens: Int) {
+                inputTokens: Int, outputTokens: Int, cacheReadTokens: Int, cacheCreationTokens: Int,
+                project: String? = nil) {
         self.service = service
         self.timestamp = timestamp
         self.model = model
@@ -50,6 +53,7 @@ public struct TokenEvent: Equatable, Sendable {
         self.outputTokens = outputTokens
         self.cacheReadTokens = cacheReadTokens
         self.cacheCreationTokens = cacheCreationTokens
+        self.project = project
     }
     public var totalTokens: Int { inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens }
 }

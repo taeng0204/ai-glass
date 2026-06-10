@@ -7,6 +7,20 @@ public struct CodexParsed: Equatable {
 }
 
 public enum CodexLogParser {
+    /// session_meta 라인에서 cwd의 lastPathComponent를 반환.
+    /// type != "session_meta" 이거나 파싱 실패 시 nil.
+    public static func parseSessionMeta(line: String) -> String? {
+        guard !line.isEmpty,
+              let data = line.data(using: .utf8),
+              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              obj["type"] as? String == "session_meta",
+              let payload = obj["payload"] as? [String: Any],
+              let cwd = payload["cwd"] as? String
+        else { return nil }
+        let last = (cwd as NSString).lastPathComponent
+        return last.isEmpty ? nil : last
+    }
+
     public static func parse(line: String) -> CodexParsed? {
         guard !line.isEmpty,
               let data = line.data(using: .utf8),

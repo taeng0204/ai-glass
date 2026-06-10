@@ -17,6 +17,12 @@ public enum ClaudeLogParser {
 
         func intValue(_ key: String) -> Int { (usage[key] as? NSNumber)?.intValue ?? 0 }
 
+        let cwd = obj["cwd"] as? String
+        let project: String? = cwd.flatMap {
+            let last = ($0 as NSString).lastPathComponent
+            return last.isEmpty ? nil : last
+        }
+
         let event = TokenEvent(
             service: .claude,
             timestamp: timestamp,
@@ -24,7 +30,8 @@ public enum ClaudeLogParser {
             inputTokens: intValue("input_tokens"),
             outputTokens: intValue("output_tokens"),
             cacheReadTokens: intValue("cache_read_input_tokens"),
-            cacheCreationTokens: intValue("cache_creation_input_tokens")
+            cacheCreationTokens: intValue("cache_creation_input_tokens"),
+            project: project
         )
 
         let messageID = message["id"] as? String
