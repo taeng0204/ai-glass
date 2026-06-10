@@ -3,31 +3,42 @@ import SwiftUI
 import AIGlassCore
 import Foundation
 
-if CommandLine.arguments.contains("--check-claude") {
-    let semaphore = DispatchSemaphore(value: 0)
-    Task {
-        defer { semaphore.signal() }
-        guard let creds = ClaudeCredentials.fromKeychain() else {
-            print("Keychain에서 Claude Code 자격증명을 찾지 못했습니다.")
-            return
-        }
-        do {
-            let (windows, raw, status) = try await ClaudeUsageAPI.fetch(token: creds.accessToken)
-            if !(200..<300).contains(status) {
-                print("HTTP", status)
+@main
+enum AIGlassMain {
+    static func main() {
+        if CommandLine.arguments.contains("--check-claude") {
+            let semaphore = DispatchSemaphore(value: 0)
+            Task {
+                defer { semaphore.signal() }
+                guard let creds = ClaudeCredentials.fromKeychain() else {
+                    print("Keychain에서 Claude Code 자격증명을 찾지 못했습니다.")
+                    return
+                }
+                do {
+                    let (windows, raw, status) = try await ClaudeUsageAPI.fetch(token: creds.accessToken)
+                    if !(200..<300).contains(status) {
+                        print("HTTP", status)
+                    }
+                    print("RAW:", String(decoding: raw, as: UTF8.self))
+                    print("PARSED:", windows ?? "파싱 실패 — parse(_:)를 실제 스키마에 맞춰 수정할 것")
+                } catch {
+                    print("API 호출 실패:", error)
+                }
             }
-            print("RAW:", String(decoding: raw, as: UTF8.self))
-            print("PARSED:", windows ?? "파싱 실패 — parse(_:)를 실제 스키마에 맞춰 수정할 것")
-        } catch {
-            print("API 호출 실패:", error)
+            semaphore.wait()
+            exit(0)
+        }
+
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+
+        MainActor.assumeIsolated {
+            let delegate = AppDelegate()
+            app.delegate = delegate
+            app.run()
         }
     }
-    semaphore.wait()
-    exit(0)
 }
-
-let app = NSApplication.shared
-app.setActivationPolicy(.accessory)
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -49,7 +60,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "✦ –"
         item.button?.target = self
-        item.button?.action = #selector(togglePopover)
+        item.button?.action = #selector(statusItemClicked)
+        item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         statusItem = item
 
         let pop = NSPopover()
@@ -118,6 +130,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         evaluateEvents()
     }
 
+    @objc func statusItemClicked() {
+        if NSApp.currentEvent?.type == .rightMouseUp {
+            showContextMenu()
+        } else {
+            togglePopover()
+        }
+    }
+
+    func showContextMenu() {
+        let menu = NSMenu()
+        let openItem = NSMenuItem(title: "대시보드 열기", action: #selector(togglePopover), keyEquivalent: "")
+        openItem.target = self
+        menu.addItem(openItem)
+        menu.addItem(.separator())
+        let quitItem = NSMenuItem(title: "AI Glass 종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quitItem.target = NSApp
+        menu.addItem(quitItem)
+        statusItem?.menu = menu          // 일시 부착
+        statusItem?.button?.performClick(nil)
+        statusItem?.menu = nil           // 분리해야 좌클릭 팝오버가 계속 동작
+    }
+
     @objc func togglePopover() {
         guard let button = statusItem?.button, let popover else { return }
         if popover.isShown {
@@ -127,10 +161,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         }
     }
-}
-
-MainActor.assumeIsolated {
-    let delegate = AppDelegate()
-    app.delegate = delegate
-    app.run()
 }
