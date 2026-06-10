@@ -35,7 +35,15 @@ public final class UsageStore {
             minuteBuckets[Int(event.timestamp.timeIntervalSince1970) / 60, default: 0] += event.totalTokens
             added = true
         }
-        if added { lastActivityAt = Date() }
+        if added {
+            lastActivityAt = Date()
+            // 48h 이전 분 버킷 제거 (장기 실행 메모리 hygiene; baseline은 24h만 사용)
+            // 컷오프 기준: 배치 내 가장 최신 이벤트 timestamp → 테스트 주입성 보장
+            if let newest = batch.map(\.event.timestamp).max() {
+                let cutoffMinute = Int(newest.timeIntervalSince1970) / 60 - 48 * 60
+                minuteBuckets = minuteBuckets.filter { $0.key > cutoffMinute }
+            }
+        }
     }
 
     public func setGeminiRequests(_ dates: [Date]) {

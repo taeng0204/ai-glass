@@ -82,24 +82,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func pollClaudeLimits() {
-        Task { @MainActor in
-            guard let creds = ClaudeCredentials.fromKeychain() else { return }
-            guard let result = try? await ClaudeUsageAPI.fetch(token: creds.accessToken),
-                  result.statusCode / 100 == 2,
-                  let windows = result.windows else { return }
-            store.setLimits(windows, for: .claude)
-            statusItem?.button?.title = "✦ \(Int(store.maxUsedPercent))%"
-        }
-    }
-
-    func refresh() {
-        claudeCollector.collect(into: store)
-        codexCollector.collect(into: store)
-        geminiCollector.collect(into: store)
+    func updateStatusTitle() {
         let percent = store.maxUsedPercent
         statusItem?.button?.title = percent > 0 ? "✦ \(Int(percent))%" : "✦ –"
+    }
 
+    func evaluateEvents() {
         let now = Date()
         let events = eventEngine.evaluate(
             limits: store.limits,
@@ -108,6 +96,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             now: now)
         // MVP: 갱신 주기당 최우선 이벤트 1건만 표시 (큐잉은 추후)
         if let first = events.first { hudState.show(first) }
+    }
+
+    func pollClaudeLimits() {
+        Task { @MainActor in
+            guard let creds = ClaudeCredentials.fromKeychain() else { return }
+            guard let result = try? await ClaudeUsageAPI.fetch(token: creds.accessToken),
+                  result.statusCode / 100 == 2,
+                  let windows = result.windows else { return }
+            store.setLimits(windows, for: .claude)
+            updateStatusTitle()
+            evaluateEvents()
+        }
+    }
+
+    func refresh() {
+        claudeCollector.collect(into: store)
+        codexCollector.collect(into: store)
+        geminiCollector.collect(into: store)
+        updateStatusTitle()
+        evaluateEvents()
     }
 
     @objc func togglePopover() {
