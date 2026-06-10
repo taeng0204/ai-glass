@@ -34,7 +34,7 @@ private func makeStore(now: Date) -> UsageStore {
     #expect(days.count == 7)
     #expect(days.last!.tokens == 3000)         // 오늘
     #expect(days[5].tokens == 500)             // 어제
-    let models = store.modelBreakdown(days: 7, now: now)
+    let models = store.modelBreakdown(days: 7, now: now, calendar: .utc)
     // opus 합계 1000+500=1500, fable 2000 → fable이 1위
     #expect(models.first!.model == "claude-fable-5")
     #expect(models.first!.tokens == 2000)
@@ -55,6 +55,8 @@ private func makeStore(now: Date) -> UsageStore {
     store.addEvents([(recent, nil)])
     #expect(store.activityLevel(now: now) > 0)   // 1분 전 활동 → 반응
     #expect(store.activityLevel(now: now) <= 1)
+    // 30_000 tokens 1분 전, 3분 창 → 10_000 t/min → level = 0.1
+    #expect(abs(store.activityLevel(now: now) - 0.1) < 0.01)
     #expect(store.activityLevel(now: now.addingTimeInterval(10 * 60)) == 0) // 10분 뒤엔 잠잠
 }
 
@@ -64,4 +66,23 @@ private func makeStore(now: Date) -> UsageStore {
     store.setLimits([LimitWindow(kind: .session5h, usedPercent: 72, resetsAt: nil),
                      LimitWindow(kind: .weekly, usedPercent: 54, resetsAt: nil)], for: .codex)
     #expect(store.maxUsedPercent == 72)
+}
+
+@MainActor @Test func todayTokensCountsOnlyTodayEvents() {
+    let now = ISO8601.date("2026-06-10T12:00:00Z")!
+    let store = makeStore(now: now)
+    // makeStore: 5분 전 1000 + 8분 전 2000 (오늘 UTC 6/10) + 26h 전 500 (어제)
+    #expect(store.todayTokens(now: now, calendar: .utc) == 3000)
+}
+
+@MainActor @Test func todayRequestsCountsTokenEventsAndGemini() {
+    let now = ISO8601.date("2026-06-10T12:00:00Z")!
+    let store = makeStore(now: now)
+    // gemini: 오늘 1건 + 어제 1건
+    store.setGeminiRequests([
+        now.addingTimeInterval(-30 * 60),           // 오늘 (30분 전)
+        now.addingTimeInterval(-25 * 3600),          // 어제
+    ])
+    // 오늘 토큰 이벤트 2건 + gemini 오늘 1건 = 3
+    #expect(store.todayRequests(now: now, calendar: .utc) == 3)
 }

@@ -9,6 +9,11 @@ public final class UsageStore {
     public private(set) var geminiRequestDates: [Date] = []
     public private(set) var lastActivityAt: Date?
     private var dedupKeys: Set<String> = []
+    /// 분 단위 토큰 합계 캐시 (key = epoch초 / 60). burn rate 계산용.
+    private var minuteBuckets: [Int: Int] = [:]
+
+    /// 이벤트 보존 기간 (일). 이보다 오래된 이벤트는 ingest 시 무시.
+    public static let retentionDays = 8
 
     public init() {}
 
@@ -17,13 +22,17 @@ public final class UsageStore {
     }
 
     public func addEvents(_ batch: [(event: TokenEvent, dedupKey: String?)]) {
+        // 수집기는 최근 8일 파일만 읽지만, 파일 내 오래된 라인 방어용 컷오프
+        let cutoff = Date().addingTimeInterval(-Double(Self.retentionDays) * 24 * 3600)
         var added = false
         for (event, key) in batch {
+            guard event.timestamp >= cutoff else { continue }
             if let key {
                 if dedupKeys.contains(key) { continue }
                 dedupKeys.insert(key)
             }
             events.append(event)
+            minuteBuckets[Int(event.timestamp.timeIntervalSince1970) / 60, default: 0] += event.totalTokens
             added = true
         }
         if added { lastActivityAt = Date() }
@@ -55,7 +64,7 @@ public final class UsageStore {
         for e in events where e.timestamp >= cutoff {
             byModel[e.model, default: 0] += e.totalTokens
         }
-        return byModel.map { ($0.key, $0.value) }.sorted { $0.1 > $1.1 }
+        return byModel.map { (model: $0.key, tokens: $0.value) }.sorted { $0.tokens > $1.tokens }
     }
 
     public func todayTokens(now: Date, calendar: Calendar = .current) -> Int {
@@ -71,24 +80,26 @@ public final class UsageStore {
     }
 
     public func tokensPerMinute(windowMinutes: Int, now: Date) -> Double {
-        let cutoff = now.addingTimeInterval(-Double(windowMinutes) * 60)
-        let total = events.filter { $0.timestamp >= cutoff && $0.timestamp <= now }
-            .reduce(0) { $0 + $1.totalTokens }
+        guard windowMinutes > 0 else { return 0 }
+        let nowMinute = Int(now.timeIntervalSince1970) / 60
+        var total = 0
+        for minute in (nowMinute - windowMinutes + 1)...nowMinute {
+            total += minuteBuckets[minute] ?? 0
+        }
         return Double(total) / Double(windowMinutes)
     }
 
     /// 최근 24h 중 활동이 있던 분 단위 버킷들의 평균 tokens/min (burn spike 기저선)
     public func activeBaselineRate(now: Date) -> Double {
-        let cutoff = now.addingTimeInterval(-24 * 3600)
-        var buckets: [Int: Int] = [:]
-        for e in events where e.timestamp >= cutoff {
-            buckets[Int(e.timestamp.timeIntervalSince1970) / 60, default: 0] += e.totalTokens
-        }
-        guard !buckets.isEmpty else { return 0 }
-        return Double(buckets.values.reduce(0, +)) / Double(buckets.count)
+        let nowMinute = Int(now.timeIntervalSince1970) / 60
+        let cutoffMinute = nowMinute - 24 * 60
+        let active = minuteBuckets.filter { $0.key > cutoffMinute && $0.key <= nowMinute }
+        guard !active.isEmpty else { return 0 }
+        return Double(active.values.reduce(0, +)) / Double(active.count)
     }
 
-    /// 펄스 웨이브 진폭 (0...1). 100k tokens/min(3분 창 기준)에서 최대.
+    /// 펄스 웨이브 진폭 (0...1). 100k tokens/min에서 최대.
+    /// 3분 창: 30fps 파형의 jitter와 반응성 균형
     public func activityLevel(now: Date) -> Double {
         min(1.0, tokensPerMinute(windowMinutes: 3, now: now) / 100_000.0)
     }
