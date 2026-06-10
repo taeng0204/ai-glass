@@ -15,3 +15,12 @@ public enum ISO8601 {
         withFrac.date(from: s) ?? plain.date(from: s)
     }
 }
+
+public extension Calendar {
+    /// UTC calendar — 타임존에 독립적인 테스트/집계에 사용
+    static let utc: Calendar = {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(identifier: "UTC")!
+        return c
+    }()
+}
