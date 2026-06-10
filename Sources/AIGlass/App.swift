@@ -60,7 +60,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "✦ –"
         item.button?.target = self
-        item.button?.action = #selector(togglePopover)
+        item.button?.action = #selector(statusItemClicked)
+        item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         statusItem = item
 
         let pop = NSPopover()
@@ -127,6 +128,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         geminiCollector.collect(into: store)
         updateStatusTitle()
         evaluateEvents()
+    }
+
+    @objc func statusItemClicked() {
+        if NSApp.currentEvent?.type == .rightMouseUp {
+            showContextMenu()
+        } else {
+            togglePopover()
+        }
+    }
+
+    func showContextMenu() {
+        let menu = NSMenu()
+        let openItem = NSMenuItem(title: "대시보드 열기", action: #selector(togglePopover), keyEquivalent: "")
+        openItem.target = self
+        menu.addItem(openItem)
+        menu.addItem(.separator())
+        let quitItem = NSMenuItem(title: "AI Glass 종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quitItem.target = NSApp
+        menu.addItem(quitItem)
+        statusItem?.menu = menu          // 일시 부착
+        statusItem?.button?.performClick(nil)
+        statusItem?.menu = nil           // 분리해야 좌클릭 팝오버가 계속 동작
     }
 
     @objc func togglePopover() {
