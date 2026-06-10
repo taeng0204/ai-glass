@@ -43,7 +43,9 @@ private func stamped(_ template: String, secondsAgo: TimeInterval = 60) -> Strin
 @MainActor @Test func codexCollectorFeedsStoreAndLimits() throws {
     let dir = try makeTempDir()
     defer { try? FileManager.default.removeItem(at: dir) }
-    try Data((stamped(codexLine) + "\n").utf8).write(to: dir.appendingPathComponent("rollout.jsonl"))
+    let file = dir.appendingPathComponent("rollout.jsonl")
+    let content = Data((stamped(codexLine) + "\n").utf8)
+    try content.write(to: file)
 
     let store = UsageStore()
     let collector = CodexCollector(root: dir)
@@ -51,6 +53,13 @@ private func stamped(_ template: String, secondsAgo: TimeInterval = 60) -> Strin
     #expect(store.events.count == 1)
     #expect(store.limits[.codex]?.count == 2)
     #expect(store.limits[.codex]?.first { $0.kind == .session5h }?.usedPercent == 34.5)
+
+    // rotation 시뮬레이션: truncate를 collect가 관측 → 오프셋 0 리셋 → 동일 내용 재작성 → 재파싱
+    try Data().write(to: file)
+    collector.collect(into: store)
+    try content.write(to: file)
+    collector.collect(into: store)
+    #expect(store.events.count == 1) // dedup 키로 중복 적재 차단
 }
 
 @MainActor @Test func geminiCollectorEstimatesDailyQuota() throws {

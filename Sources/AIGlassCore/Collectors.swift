@@ -34,7 +34,11 @@ public final class CodexCollector {
         for file in LogLocator.recentFiles(under: root, suffix: ".jsonl") {
             for line in reader.newLines(of: file) {
                 guard let parsed = CodexLogParser.parse(line: line) else { continue }
-                if let event = parsed.event { batch.append((event, nil)) }
+                if let event = parsed.event {
+                    // rotation으로 오프셋이 리셋돼 같은 라인을 재파싱해도 중복 적재 방지
+                    let key = "codex:\(file.lastPathComponent):\(parsed.timestamp.timeIntervalSince1970):\(event.totalTokens)"
+                    batch.append((event, key))
+                }
                 if !parsed.limits.isEmpty, parsed.timestamp > latestLimitsTimestamp {
                     latestLimitsTimestamp = parsed.timestamp
                     latestLimits = parsed.limits
