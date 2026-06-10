@@ -47,14 +47,15 @@ public enum ClaudeUsageAPI {
         return windows.isEmpty ? nil : windows
     }
 
-    /// raw 응답도 함께 돌려줘서 --check-claude에서 실제 스키마를 눈으로 확인할 수 있게 한다.
-    public static func fetch(token: String) async throws -> (windows: [LimitWindow]?, raw: Data) {
+    /// raw 응답과 HTTP 상태도 함께 돌려줘서 --check-claude에서 실제 스키마/인증 실패를 눈으로 확인할 수 있게 한다.
+    public static func fetch(token: String) async throws -> (windows: [LimitWindow]?, raw: Data, statusCode: Int) {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "GET"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let (data, _) = try await URLSession.shared.data(for: request)
-        return (parse(data), data)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        return (parse(data), data, status)
     }
 }

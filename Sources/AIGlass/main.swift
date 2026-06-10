@@ -11,7 +11,10 @@ if CommandLine.arguments.contains("--check-claude") {
             return
         }
         do {
-            let (windows, raw) = try await ClaudeUsageAPI.fetch(token: creds.accessToken)
+            let (windows, raw, status) = try await ClaudeUsageAPI.fetch(token: creds.accessToken)
+            if !(200..<300).contains(status) {
+                print("HTTP", status)
+            }
             print("RAW:", String(decoding: raw, as: UTF8.self))
             print("PARSED:", windows ?? "파싱 실패 — parse(_:)를 실제 스키마에 맞춰 수정할 것")
         } catch {

@@ -15,6 +15,13 @@ private let usageJSON = """
     #expect(windows.contains { $0.kind == .weekly && $0.usedPercent == 21.0 })
 }
 
+@Test func parsesPartialWindowResponse() throws {
+    let json = #"{"five_hour":{"utilization":50.0,"resets_at":"2026-06-10T15:00:00Z"}}"#
+    let windows = try #require(ClaudeUsageAPI.parse(Data(json.utf8)))
+    #expect(windows.count == 1)
+    #expect(windows.first?.kind == .session5h)
+}
+
 @Test func parseFailsGracefully() {
     #expect(ClaudeUsageAPI.parse(Data("{}".utf8)) == nil)
     #expect(ClaudeUsageAPI.parse(Data("nope".utf8)) == nil)
