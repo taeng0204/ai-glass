@@ -1,0 +1,55 @@
+import Foundation
+
+public enum ServiceID: String, CaseIterable, Codable, Sendable, Identifiable {
+    case claude, codex, gemini
+    public var id: String { rawValue }
+    public var displayName: String {
+        switch self {
+        case .claude: return "Claude Code"
+        case .codex: return "Codex"
+        case .gemini: return "Gemini"
+        }
+    }
+}
+
+public struct LimitWindow: Equatable, Sendable {
+    public enum Kind: String, Sendable, CaseIterable {
+        case session5h, weekly, daily
+        public var label: String {
+            switch self {
+            case .session5h: return "5h"
+            case .weekly: return "주간"
+            case .daily: return "일일"
+            }
+        }
+    }
+    public let kind: Kind
+    public let usedPercent: Double // 0...100
+    public let resetsAt: Date?
+    public init(kind: Kind, usedPercent: Double, resetsAt: Date?) {
+        self.kind = kind
+        self.usedPercent = usedPercent
+        self.resetsAt = resetsAt
+    }
+}
+
+public struct TokenEvent: Equatable, Sendable {
+    public let service: ServiceID
+    public let timestamp: Date
+    public let model: String
+    public let inputTokens: Int
+    public let outputTokens: Int
+    public let cacheReadTokens: Int
+    public let cacheCreationTokens: Int
+    public init(service: ServiceID, timestamp: Date, model: String,
+                inputTokens: Int, outputTokens: Int, cacheReadTokens: Int, cacheCreationTokens: Int) {
+        self.service = service
+        self.timestamp = timestamp
+        self.model = model
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.cacheReadTokens = cacheReadTokens
+        self.cacheCreationTokens = cacheCreationTokens
+    }
+    public var totalTokens: Int { inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens }
+}
