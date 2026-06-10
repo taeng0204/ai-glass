@@ -79,6 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             burnRate: store.tokensPerMinute(windowMinutes: 10, now: now),
             baseline: store.activeBaselineRate(now: now),
             now: now)
+        // MVP: 갱신 주기당 최우선 이벤트 1건만 표시 (큐잉은 추후)
         if let first = events.first { hudState.show(first) }
     }
 

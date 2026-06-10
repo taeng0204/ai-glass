@@ -10,7 +10,7 @@ final class HUDState {
     func show(_ event: HUDEvent) {
         dismissTask?.cancel()
         withAnimation(.spring(duration: 0.55, bounce: 0.25)) { currentEvent = event }
-        dismissTask = Task { [weak self] in
+        dismissTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(6))
             guard !Task.isCancelled else { return }
             withAnimation(.spring(duration: 0.45)) { self?.currentEvent = nil }
@@ -27,12 +27,15 @@ struct HUDView: View {
         ZStack(alignment: .topTrailing) {
             if let event = state.currentEvent {
                 EventCard(event: event)
+                    .contentShape(RoundedRectangle(cornerRadius: 18))
+                    .onTapGesture { onTap() }
             } else {
                 WavePill(store: store)
+                    .contentShape(RoundedRectangle(cornerRadius: 22))
+                    .onTapGesture { onTap() }
             }
         }
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: state.currentEvent != nil ? 18 : 22))
-        .onTapGesture { onTap() }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
         .padding(10)
     }
