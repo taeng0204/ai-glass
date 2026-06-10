@@ -37,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let hudState = HUDState()
     let eventEngine = EventEngine()
     var hudController: HUDPanelController?
+    var watcher: DirectoryWatcher?
     lazy var claudeCollector = ClaudeCollector(
         root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects"))
     lazy var codexCollector = CodexCollector(
@@ -63,6 +64,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refresh()
         Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
+        }
+
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        watcher = DirectoryWatcher(paths: [
+            home + "/.claude/projects",
+            home + "/.codex/sessions",
+            home + "/.gemini/tmp",
+        ]) { [weak self] in
+            MainActor.assumeIsolated { self?.refresh() }
+        }
+
+        // Claude 한도: 60초 폴링 (Keychain 접근은 최초 1회 허용 필요)
+        pollClaudeLimits()
+        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.pollClaudeLimits() }
+        }
+    }
+
+    func pollClaudeLimits() {
+        Task { @MainActor in
+            guard let creds = ClaudeCredentials.fromKeychain() else { return }
+            guard let result = try? await ClaudeUsageAPI.fetch(token: creds.accessToken),
+                  result.statusCode / 100 == 2,
+                  let windows = result.windows else { return }
+            store.setLimits(windows, for: .claude)
+            statusItem?.button?.title = "✦ \(Int(store.maxUsedPercent))%"
         }
     }
 
