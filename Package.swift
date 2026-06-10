@@ -19,7 +19,7 @@ let package = Package(
         ),
         .testTarget(
             name: "AIGlassCoreTests",
-            dependencies: ["AIGlassCore"],
+            dependencies: ["AIGlassCore", "AIGlass"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
     ]
