@@ -34,6 +34,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let store = UsageStore()
     var statusItem: NSStatusItem?
     var popover: NSPopover?
+    let hudState = HUDState()
+    let eventEngine = EventEngine()
+    var hudController: HUDPanelController?
     lazy var claudeCollector = ClaudeCollector(
         root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects"))
     lazy var codexCollector = CodexCollector(
@@ -53,6 +56,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pop.contentViewController = NSHostingController(rootView: DashboardView(store: store))
         popover = pop
 
+        hudController = HUDPanelController(store: store, state: hudState) { [weak self] in
+            self?.togglePopover()
+        }
+
         refresh()
         Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
@@ -65,6 +72,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         geminiCollector.collect(into: store)
         let percent = store.maxUsedPercent
         statusItem?.button?.title = percent > 0 ? "✦ \(Int(percent))%" : "✦ –"
+
+        let now = Date()
+        let events = eventEngine.evaluate(
+            limits: store.limits,
+            burnRate: store.tokensPerMinute(windowMinutes: 10, now: now),
+            baseline: store.activeBaselineRate(now: now),
+            now: now)
+        if let first = events.first { hudState.show(first) }
     }
 
     @objc func togglePopover() {
