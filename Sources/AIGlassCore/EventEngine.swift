@@ -19,6 +19,7 @@ public struct HUDEvent: Equatable {
 }
 
 /// UsageStore 스냅샷을 평가해 HUD 이벤트를 만든다. 상태(직전 %, 쿨다운)를 보유.
+@MainActor
 public final class EventEngine {
     public var thresholds: [Int] = [70, 90]
     public var spikeMultiplier: Double = 3.0
@@ -31,6 +32,10 @@ public final class EventEngine {
 
     public init() {}
 
+    /// - Parameters:
+    ///   - burnRate: `UsageStore.tokensPerMinute(windowMinutes: 10)` 값 (현재 분당 토큰 소모율)
+    ///   - baseline: `UsageStore.activeBaselineRate()` 값 (평소 활동 시의 기준 소모율)
+    /// 참고: 임계 근처 오실레이션(71→69→71 재발화)은 의도된 MVP 단순화로 미보호.
     public func evaluate(limits: [ServiceID: [LimitWindow]],
                          burnRate: Double, baseline: Double, now: Date) -> [HUDEvent] {
         var thresholdEvents: [HUDEvent] = []

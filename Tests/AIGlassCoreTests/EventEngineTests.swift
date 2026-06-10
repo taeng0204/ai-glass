@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import AIGlassCore
 
-@Test func firesOnThresholdCrossing() {
+@MainActor @Test func firesOnThresholdCrossing() {
     let engine = EventEngine()
     let now = Date()
     let below: [ServiceID: [LimitWindow]] = [.codex: [LimitWindow(kind: .session5h, usedPercent: 65, resetsAt: nil)]]
@@ -19,7 +19,7 @@ import Testing
     #expect(engine.evaluate(limits: above, burnRate: 0, baseline: 0, now: now).isEmpty)
 }
 
-@Test func firesOnWindowReset() {
+@MainActor @Test func firesOnWindowReset() {
     let engine = EventEngine()
     let now = Date()
     let high: [ServiceID: [LimitWindow]] = [.claude: [LimitWindow(kind: .session5h, usedPercent: 80, resetsAt: nil)]]
@@ -33,7 +33,7 @@ import Testing
     }
 }
 
-@Test func firesBurnSpikeWithCooldown() {
+@MainActor @Test func firesBurnSpikeWithCooldown() {
     let engine = EventEngine()
     let now = Date()
     let spike = engine.evaluate(limits: [:], burnRate: 9000, baseline: 1000, now: now)
@@ -48,7 +48,7 @@ import Testing
     #expect(engine.evaluate(limits: [:], burnRate: 9000, baseline: 1000, now: now.addingTimeInterval(31 * 60)).count == 1)
 }
 
-@Test func priorityOrdersThresholdFirst() {
+@MainActor @Test func priorityOrdersThresholdFirst() {
     let engine = EventEngine()
     let now = Date()
     let limits: [ServiceID: [LimitWindow]] = [.codex: [LimitWindow(kind: .session5h, usedPercent: 95, resetsAt: nil)]]
@@ -58,4 +58,12 @@ import Testing
         Issue.record("threshold should come first")
         return
     }
+}
+
+@MainActor @Test func thresholdSubtitleIncludesCountdown() {
+    let engine = EventEngine()
+    let now = Date()
+    let limits: [ServiceID: [LimitWindow]] = [.claude: [LimitWindow(kind: .session5h, usedPercent: 75, resetsAt: now.addingTimeInterval(2 * 3600 + 14 * 60))]]
+    let events = engine.evaluate(limits: limits, burnRate: 0, baseline: 0, now: now)
+    #expect(events.first?.subtitle.contains("2h 14m") == true)
 }
