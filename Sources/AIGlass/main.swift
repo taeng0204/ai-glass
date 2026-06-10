@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import AIGlassCore
 import Foundation
 
@@ -28,16 +29,57 @@ if CommandLine.arguments.contains("--check-claude") {
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    let store = UsageStore()
     var statusItem: NSStatusItem?
+    var popover: NSPopover?
+    lazy var claudeCollector = ClaudeCollector(
+        root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects"))
+    lazy var codexCollector = CodexCollector(
+        root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/sessions"))
+    lazy var geminiCollector = GeminiCollector(
+        root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".gemini/tmp"))
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "✦ –"
+        item.button?.target = self
+        item.button?.action = #selector(togglePopover)
         statusItem = item
+
+        let pop = NSPopover()
+        pop.behavior = .transient
+        pop.contentViewController = NSHostingController(rootView: DashboardView(store: store))
+        popover = pop
+
+        refresh()
+        Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }
+    }
+
+    func refresh() {
+        claudeCollector.collect(into: store)
+        codexCollector.collect(into: store)
+        geminiCollector.collect(into: store)
+        let percent = store.maxUsedPercent
+        statusItem?.button?.title = percent > 0 ? "✦ \(Int(percent))%" : "✦ –"
+    }
+
+    @objc func togglePopover() {
+        guard let button = statusItem?.button, let popover else { return }
+        if popover.isShown {
+            popover.performClose(nil)
+        } else {
+            refresh()
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
     }
 }
 
-let delegate = AppDelegate()
-app.delegate = delegate
-app.run()
+MainActor.assumeIsolated {
+    let delegate = AppDelegate()
+    app.delegate = delegate
+    app.run()
+}
