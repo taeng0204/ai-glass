@@ -4,6 +4,9 @@ import PackageDescription
 let package = Package(
     name: "AIGlass",
     platforms: [.macOS("26.0")],
+    products: [
+        .executable(name: "AIGlass", targets: ["AIGlass"]),
+    ],
     targets: [
         .target(
             name: "AIGlassCore",
