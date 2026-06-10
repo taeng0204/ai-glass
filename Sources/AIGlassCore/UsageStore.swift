@@ -88,8 +88,8 @@ public final class UsageStore {
         return Double(buckets.values.reduce(0, +)) / Double(buckets.count)
     }
 
-    /// 펄스 웨이브 진폭 (0...1). 100k tokens/min(10분 창 기준)에서 최대.
+    /// 펄스 웨이브 진폭 (0...1). 100k tokens/min(3분 창 기준)에서 최대.
     public func activityLevel(now: Date) -> Double {
-        min(1.0, tokensPerMinute(windowMinutes: 10, now: now) / 100_000.0)
+        min(1.0, tokensPerMinute(windowMinutes: 3, now: now) / 100_000.0)
     }
 }

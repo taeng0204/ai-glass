@@ -45,9 +45,17 @@ private func makeStore(now: Date) -> UsageStore {
     let store = makeStore(now: now)
     // 최근 10분: 5분 전 1000 + 8분 전 2000 = 3000 → 300 tokens/min
     #expect(abs(store.tokensPerMinute(windowMinutes: 10, now: now) - 300.0) < 0.01)
-    // 활동 레벨은 0...1로 클램프
-    #expect(store.activityLevel(now: now) > 0)
+}
+
+@MainActor @Test func activityLevelReactsToRecentActivity() {
+    let now = ISO8601.date("2026-06-10T12:00:00Z")!
+    let store = UsageStore()
+    let recent = TokenEvent(service: .claude, timestamp: now.addingTimeInterval(-60), model: "m",
+                            inputTokens: 30_000, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0)
+    store.addEvents([(recent, nil)])
+    #expect(store.activityLevel(now: now) > 0)   // 1분 전 활동 → 반응
     #expect(store.activityLevel(now: now) <= 1)
+    #expect(store.activityLevel(now: now.addingTimeInterval(10 * 60)) == 0) // 10분 뒤엔 잠잠
 }
 
 @MainActor @Test func maxUsedPercentAcrossServices() {
