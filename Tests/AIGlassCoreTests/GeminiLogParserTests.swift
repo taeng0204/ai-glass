@@ -29,5 +29,5 @@ private let geminiJSON = """
     let window = GeminiLogParser.dailyWindow(requestDates: today + yesterday, quota: 100, now: now, calendar: cal)
     #expect(window.kind == .daily)
     #expect(window.usedPercent == 2.0) // 오늘 2건 / 100
-    #expect(window.resetsAt == cal.startOfDay(for: now).addingTimeInterval(24 * 3600))
+    #expect(window.resetsAt == cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: now)))
 }

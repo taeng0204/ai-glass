@@ -10,28 +10,32 @@ private let codexLineNullInfo = """
 {"timestamp":"2026-06-10T14:00:00.000Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"primary":{"used_percent":10.0,"window_minutes":299,"resets_in_seconds":1000},"secondary":{"used_percent":5.0,"window_minutes":10079,"resets_in_seconds":2000}}}}
 """
 
-@Test func parsesTokenCountWithInfo() {
-    let parsed = CodexLogParser.parse(line: codexLine)
-    #expect(parsed != nil)
-    let p = parsed!
-    #expect(p.event != nil)
+@Test func parsesTokenCountWithInfo() throws {
+    let p = try #require(CodexLogParser.parse(line: codexLine))
+    let event = try #require(p.event)
     // input은 캐시 제외분: 93100 - 1920 = 91180
-    #expect(p.event!.inputTokens == 91180)
-    #expect(p.event!.cacheReadTokens == 1920)
-    #expect(p.event!.outputTokens == 541)
-    #expect(p.event!.service == .codex)
+    #expect(event.inputTokens == 91180)
+    #expect(event.cacheReadTokens == 1920)
+    #expect(event.outputTokens == 541)
+    #expect(event.service == .codex)
     #expect(p.limits.count == 2)
-    let session = p.limits.first { $0.kind == .session5h }!
+    let session = try #require(p.limits.first { $0.kind == .session5h })
     #expect(session.usedPercent == 34.5)
     #expect(session.resetsAt == p.timestamp.addingTimeInterval(17940))
     #expect(p.limits.contains { $0.kind == .weekly && $0.usedPercent == 12.0 })
 }
 
-@Test func parsesTokenCountWithNullInfo() {
-    let parsed = CodexLogParser.parse(line: codexLineNullInfo)
-    #expect(parsed != nil)
-    #expect(parsed!.event == nil)
-    #expect(parsed!.limits.count == 2)
+@Test func parsesTokenCountWithNullInfo() throws {
+    let parsed = try #require(CodexLogParser.parse(line: codexLineNullInfo))
+    #expect(parsed.event == nil)
+    #expect(parsed.limits.count == 2)
+}
+
+@Test func parsesTokenCountWithMissingRateLimits() throws {
+    let line = #"{"timestamp":"2026-06-10T14:00:00Z","type":"event_msg","payload":{"type":"token_count","info":null}}"#
+    let parsed = try #require(CodexLogParser.parse(line: line))
+    #expect(parsed.limits.isEmpty)
+    #expect(parsed.event == nil)
 }
 
 @Test func skipsNonTokenCountLines() {

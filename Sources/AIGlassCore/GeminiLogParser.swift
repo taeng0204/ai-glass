@@ -20,6 +20,6 @@ public enum GeminiLogParser {
         let todayCount = requestDates.filter { $0 >= start && $0 <= now }.count
         let percent = quota > 0 ? Double(todayCount) / Double(quota) * 100.0 : 0
         return LimitWindow(kind: .daily, usedPercent: min(100, percent),
-                           resetsAt: start.addingTimeInterval(24 * 3600))
+                           resetsAt: calendar.date(byAdding: .day, value: 1, to: start))
     }
 }
