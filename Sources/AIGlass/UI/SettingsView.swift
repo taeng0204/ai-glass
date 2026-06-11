@@ -9,7 +9,7 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("알림 임계값") {
+            Section("임계값") {
                 Stepper(value: $settings.warnThreshold,
                         in: 50...(settings.critThreshold - 5), step: 5) {
                     Text("경고: \(Int(settings.warnThreshold))%")
@@ -18,6 +18,17 @@ struct SettingsView: View {
                         in: (settings.warnThreshold + 5)...99, step: 5) {
                     Text("위험: \(Int(settings.critThreshold))%")
                 }
+                Text("게이지 색상과 알림 기준에 함께 적용됩니다")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("표시할 에이전트") {
+                ForEach(ServiceID.allCases) { service in
+                    Toggle(service.displayName, isOn: enabledBinding(for: service))
+                        .disabled(settings.enabledServices == [service]) // 마지막 1개는 못 끔
+                }
+                Text("끄면 대시보드·HUD·알림에서 제외됩니다")
+                    .font(.caption).foregroundStyle(.secondary)
             }
 
             Section("표시 / 알림") {
@@ -55,5 +66,18 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 320)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// 서비스 표시 토글 바인딩 — 마지막 1개를 끄려는 시도는 무시(최소 1개 보장).
+    private func enabledBinding(for service: ServiceID) -> Binding<Bool> {
+        Binding(
+            get: { settings.enabledServices.contains(service) },
+            set: { newValue in
+                if newValue {
+                    settings.enabledServices.insert(service)
+                } else if settings.enabledServices.count > 1 {
+                    settings.enabledServices.remove(service)
+                }
+            })
     }
 }

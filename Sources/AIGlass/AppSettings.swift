@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import AIGlassCore
 
 /// 사용자 설정. UserDefaults 백킹, 네임스페이스 키 `aiglass.*`.
 /// 단위 테스트는 코어가 아니므로 생략(수동 검증).
@@ -16,6 +17,7 @@ final class AppSettings {
         static let geminiDailyQuota = "aiglass.geminiDailyQuota"
         static let launchAtLogin = "aiglass.launchAtLogin"
         static let hudFrame = "aiglass.hudFrame"
+        static let enabledServices = "aiglass.enabledServices"
     }
 
     var warnThreshold: Double {
@@ -41,6 +43,10 @@ final class AppSettings {
     var hudFrame: String? {
         didSet { defaults.set(hudFrame, forKey: Key.hudFrame) }
     }
+    /// 대시보드/HUD에 표시할 에이전트. 최소 1개 보장은 UI(SettingsView)에서. 기본 전체.
+    var enabledServices: Set<ServiceID> {
+        didSet { defaults.set(enabledServices.map(\.rawValue).sorted(), forKey: Key.enabledServices) }
+    }
 
     init() {
         warnThreshold = defaults.object(forKey: Key.warnThreshold) as? Double ?? 70
@@ -50,5 +56,8 @@ final class AppSettings {
         geminiDailyQuota = defaults.object(forKey: Key.geminiDailyQuota) as? Int ?? 1000
         launchAtLogin = defaults.object(forKey: Key.launchAtLogin) as? Bool ?? false
         hudFrame = defaults.string(forKey: Key.hudFrame)
+        let raw = defaults.stringArray(forKey: Key.enabledServices) ?? []
+        let parsed = Set(raw.compactMap(ServiceID.init(rawValue:)))
+        enabledServices = parsed.isEmpty ? Set(ServiceID.allCases) : parsed
     }
 }

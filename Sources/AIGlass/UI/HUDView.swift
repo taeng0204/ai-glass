@@ -81,9 +81,42 @@ func allocateBars(share: [ServiceID: Double], barCount: Int) -> [ServiceID?] {
     return result
 }
 
+/// 이벤트 종류별 아이콘/색 — EventCard와 대시보드 기록 탭에서 공유.
+extension HUDEvent.Kind {
+    var iconName: String {
+        switch self {
+        case .limitThreshold: return "exclamationmark.triangle.fill"
+        case .depletionRisk: return "hourglass.bottomhalf.filled"
+        case .windowReset: return "sparkles"
+        case .burnSpike: return "flame.fill"
+        case .briefing(let period):
+            switch period {
+            case .morning: return "sun.max.fill"
+            case .lunch: return "gauge.with.needle"
+            case .evening: return "moon.stars.fill"
+            }
+        }
+    }
+    var iconColor: Color {
+        switch self {
+        case .limitThreshold: return .orange
+        case .depletionRisk: return .orange
+        case .windowReset: return .green
+        case .burnSpike: return .pink
+        case .briefing(let period):
+            switch period {
+            case .morning: return .yellow
+            case .lunch: return .blue
+            case .evening: return .indigo
+            }
+        }
+    }
+}
+
 struct HUDView: View {
     let store: UsageStore
     let state: HUDState
+    let settings: AppSettings
     var onTap: () -> Void
 
     private var cornerRadius: CGFloat {
@@ -95,13 +128,13 @@ struct HUDView: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             if let event = state.currentEvent {
-                EventCard(event: event)
+                EventCard(event: event, warn: settings.warnThreshold, crit: settings.critThreshold)
                     .contentShape(RoundedRectangle(cornerRadius: 18))
                     .onTapGesture { onTap() }
             } else if state.hovering {
-                HoverCard(store: store, onTap: onTap)
+                HoverCard(store: store, warn: settings.warnThreshold, crit: settings.critThreshold, onTap: onTap)
             } else {
-                WavePill(store: store)
+                WavePill(store: store, warn: settings.warnThreshold, crit: settings.critThreshold)
                     .contentShape(RoundedRectangle(cornerRadius: 22))
                     .onTapGesture { onTap() }
             }
@@ -115,6 +148,8 @@ struct HUDView: View {
 
 struct WavePill: View {
     let store: UsageStore
+    var warn: Double = 70
+    var crit: Double = 90
 
     /// limits가 있는 서비스 — claude, codex, gemini 고정 순.
     private var rotationServices: [ServiceID] {
@@ -152,7 +187,7 @@ struct WavePill: View {
                     }
                     Text("\(Int(percent))%")
                         .font(.system(size: 11, weight: .bold).monospacedDigit())
-                        .foregroundStyle(Theme.statusColor(percent: percent))
+                        .foregroundStyle(Theme.statusColor(percent: percent, warn: warn, crit: crit))
                 }
                 .id(index)
                 .transition(.asymmetric(
@@ -217,6 +252,8 @@ struct WavePill: View {
 
 struct HoverCard: View {
     let store: UsageStore
+    var warn: Double = 70
+    var crit: Double = 90
     var onTap: () -> Void
 
     /// 서비스당 표시 순서: 5h → 주간 → 일일. 존재하는 윈도우만.
@@ -278,7 +315,7 @@ struct HoverCard: View {
     /// leading=false면 헤더 아래 들여쓰기.
     private func metricRow(_ window: LimitWindow) -> some View {
         let percent = window.usedPercent
-        let tint = Theme.statusColor(percent: percent)
+        let tint = Theme.statusColor(percent: percent, warn: warn, crit: crit)
         return HStack(spacing: 6) {
             Text(window.kind.label)
                 .font(.system(size: 9.5, weight: .medium))
@@ -305,50 +342,23 @@ struct HoverCard: View {
 
 struct EventCard: View {
     let event: HUDEvent
+    var warn: Double = 70
+    var crit: Double = 90
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Image(systemName: icon)
+                Image(systemName: event.kind.iconName)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(iconColor)
+                    .foregroundStyle(event.kind.iconColor)
                 Text(event.title).font(.system(size: 12, weight: .bold))
             }
             Text(event.subtitle).font(.system(size: 10.5)).foregroundStyle(.secondary)
             if let percent = event.percent {
-                GaugeBar(percent: percent, tint: Theme.statusColor(percent: percent))
+                GaugeBar(percent: percent, tint: Theme.statusColor(percent: percent, warn: warn, crit: crit))
             }
         }
         .padding(12)
         .frame(width: 230, alignment: .leading)
-    }
-
-    private var icon: String {
-        switch event.kind {
-        case .limitThreshold: return "exclamationmark.triangle.fill"
-        case .depletionRisk: return "hourglass.bottomhalf.filled"
-        case .windowReset: return "sparkles"
-        case .burnSpike: return "flame.fill"
-        case .briefing(let period):
-            switch period {
-            case .morning: return "sun.max.fill"
-            case .lunch: return "gauge.with.needle"
-            case .evening: return "moon.stars.fill"
-            }
-        }
-    }
-    private var iconColor: Color {
-        switch event.kind {
-        case .limitThreshold: return .orange
-        case .depletionRisk: return .orange
-        case .windowReset: return .green
-        case .burnSpike: return .pink
-        case .briefing(let period):
-            switch period {
-            case .morning: return .yellow
-            case .lunch: return .blue
-            case .evening: return .indigo
-            }
-        }
     }
 }

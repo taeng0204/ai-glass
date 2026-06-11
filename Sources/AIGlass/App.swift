@@ -48,6 +48,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var dashboardPanel: DashboardPanelController?
     let hudState = HUDState()
     let eventEngine = EventEngine()
+    /// 알림 기록 (대시보드 기록 탭). append 배선은 Y3에서.
+    let eventLog = EventLog()
     var hudController: HUDPanelController?
     var watcher: DirectoryWatcher?
     var hotKey: GlobalHotKey?
@@ -87,8 +89,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dashboardPanel = DashboardPanelController(
             store: store,
             statsStore: statsStore,
+            settings: settings,
+            eventLog: eventLog,
             onRefresh: { [weak self] in self?.refresh() },
-            onClose: {})
+            onClose: {},
+            onSettings: { [weak self] in self?.openSettings() },
+            onReplay: { [weak self] event in self?.hudState.show(event, duration: 2.5) })
 
         hudController = HUDPanelController(store: store, state: hudState, settings: settings) { [weak self] in
             self?.togglePopover()
