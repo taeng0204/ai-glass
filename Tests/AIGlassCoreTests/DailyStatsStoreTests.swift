@@ -56,6 +56,40 @@ private func tempDBPath() -> String {
     #expect(sum == 100)  // 40일 전은 30일 범위 밖
 }
 
+@MainActor @Test func statsStoreDailyTotalsByServiceIsDeterministicallySorted() {
+    let now = ISO8601.date("2026-06-10T12:00:00Z")!
+    let store = try! #require(DailyStatsStore(path: tempDBPath()))
+    let yesterday = now.addingTimeInterval(-24 * 3600)
+    // 삽입 순서를 일부러 allCases 역순/혼합으로.
+    let events = [
+        TokenEvent(service: .gemini, timestamp: now, model: "m",
+                   inputTokens: 30, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0),
+        TokenEvent(service: .claude, timestamp: now, model: "m",
+                   inputTokens: 10, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0),
+        TokenEvent(service: .codex, timestamp: now, model: "m",
+                   inputTokens: 20, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0),
+        TokenEvent(service: .gemini, timestamp: yesterday, model: "m",
+                   inputTokens: 100, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0),
+        TokenEvent(service: .claude, timestamp: yesterday, model: "m",
+                   inputTokens: 300, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0),
+    ]
+    store.upsert(events: events, calendar: .utc)
+    let rows = store.dailyTotalsByService(days: 7, now: now, calendar: .utc)
+
+    // day 오름차순
+    for i in 1..<rows.count { #expect(rows[i - 1].day <= rows[i].day) }
+    // 같은 day 안에서 allCases 순서(claude < codex < gemini)
+    let order = Dictionary(uniqueKeysWithValues: ServiceID.allCases.enumerated().map { ($1, $0) })
+    for i in 1..<rows.count where Calendar.utc.isDate(rows[i - 1].day, inSameDayAs: rows[i].day) {
+        #expect(order[rows[i - 1].service]! < order[rows[i].service]!)
+    }
+    // 어제 행 순서가 정확히 [claude, gemini] (codex는 어제 활동 없음)
+    let cal = Calendar.utc
+    let yStart = cal.date(byAdding: .day, value: -1, to: cal.startOfDay(for: now))!
+    let yRows = rows.filter { cal.isDate($0.day, inSameDayAs: yStart) }
+    #expect(yRows.map(\.service) == [.claude, .gemini])
+}
+
 @MainActor @Test func totalCostUsesModelRates() {
     let now = ISO8601.date("2026-06-10T12:00:00Z")!
     let store = try! #require(DailyStatsStore(path: tempDBPath()))

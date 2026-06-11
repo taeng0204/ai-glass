@@ -22,8 +22,12 @@ final class DashboardPanelController {
 
     init(store: UsageStore,
          statsStore: DailyStatsStore?,
+         settings: AppSettings,
+         eventLog: EventLog,
          onRefresh: @escaping () -> Void,
-         onClose: @escaping () -> Void) {
+         onClose: @escaping () -> Void,
+         onSettings: @escaping () -> Void,
+         onReplay: @escaping (HUDEvent) -> Void) {
         self.store = store
         self.statsStore = statsStore
         self.onRefresh = onRefresh
@@ -39,11 +43,38 @@ final class DashboardPanelController {
         panel.hasShadow = false // 그림자는 glassEffect가 그림
         panel.hidesOnDeactivate = false
 
-        let root = DashboardView(store: store, statsStore: statsStore)
+        let root = DashboardView(store: store,
+                                 statsStore: statsStore,
+                                 settings: settings,
+                                 eventLog: eventLog,
+                                 onSettings: onSettings,
+                                 onReplay: onReplay,
+                                 onResize: { [weak self] in self?.resizeToFit() })
             .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22))
             .padding(8)
             .fixedSize()
         panel.contentView = FirstMouseDashboardHostingView(rootView: root)
+    }
+
+    /// 탭 전환 등으로 콘텐츠 높이가 바뀔 때 패널 크기를 다시 맞춘다 (상단 모서리 고정).
+    /// 전환 애니메이션 중에는 두 탭이 공존(fittingSize=max)하므로, 즉시 한 번 + 전환 종료 후 한 번 더.
+    func resizeToFit() {
+        applyFittingSize()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+            self?.applyFittingSize()
+        }
+    }
+
+    private func applyFittingSize() {
+        guard panel.isVisible else { return }
+        panel.layoutIfNeeded()
+        guard let fitting = panel.contentView?.fittingSize,
+              fitting.width > 0, fitting.height > 0 else { return }
+        var frame = panel.frame
+        // 상단 고정: 높이 변화만큼 origin.y 보정.
+        frame.origin.y = frame.maxY - fitting.height
+        frame.size = fitting
+        panel.setFrame(frame, display: true, animate: true)
     }
 
     deinit {

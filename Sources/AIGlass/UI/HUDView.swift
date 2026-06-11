@@ -6,8 +6,18 @@ import AIGlassCore
 final class HUDState {
     var currentEvent: HUDEvent?
     var hovering = false
+    /// ⌘⇧E로 호버 카드를 고정 표시. true면 마우스가 떠나도 카드 유지.
+    var pinnedExpand = false
     private var dismissTask: Task<Void, Never>?
     private var hoverTask: Task<Void, Never>?
+
+    /// 호버 카드를 보여야 하는가 (hover 중이거나 expand 고정).
+    var showsHoverCard: Bool { hovering || pinnedExpand }
+
+    /// ⌘⇧E 토글 — expand 고정 켜기/끄기.
+    func togglePinnedExpand() {
+        withAnimation(.spring(duration: 0.4, bounce: 0.2)) { pinnedExpand.toggle() }
+    }
 
     func show(_ event: HUDEvent, duration: TimeInterval = 6) {
         dismissTask?.cancel()
@@ -81,31 +91,78 @@ func allocateBars(share: [ServiceID: Double], barCount: Int) -> [ServiceID?] {
     return result
 }
 
+/// 이벤트 종류별 아이콘/색 — EventCard와 대시보드 기록 탭에서 공유.
+extension HUDEvent.Kind {
+    var iconName: String {
+        switch self {
+        case .limitThreshold: return "exclamationmark.triangle.fill"
+        case .depletionRisk: return "hourglass.bottomhalf.filled"
+        case .windowReset: return "sparkles"
+        case .burnSpike: return "flame.fill"
+        case .briefing(let period):
+            switch period {
+            case .morning: return "sun.max.fill"
+            case .lunch: return "gauge.with.needle"
+            case .evening: return "moon.stars.fill"
+            }
+        }
+    }
+    var iconColor: Color {
+        switch self {
+        case .limitThreshold: return .orange
+        case .depletionRisk: return .orange
+        case .windowReset: return .green
+        case .burnSpike: return .pink
+        case .briefing(let period):
+            switch period {
+            case .morning: return .yellow
+            case .lunch: return .blue
+            case .evening: return .indigo
+            }
+        }
+    }
+}
+
 struct HUDView: View {
     let store: UsageStore
     let state: HUDState
+    let settings: AppSettings
     var onTap: () -> Void
+    /// 클릭 바운스 트리거.
+    @State private var bounce = false
+
+    /// 켜진 서비스만 (allCases 순 유지).
+    private var enabled: Set<ServiceID> { settings.enabledServices }
 
     private var cornerRadius: CGFloat {
         if state.currentEvent != nil { return 18 }
-        if state.hovering { return 16 }
+        if state.showsHoverCard { return 16 }
         return 22
+    }
+
+    private func tapped() {
+        bounce = true
+        withAnimation(.spring(duration: 0.35, bounce: 0.5)) { bounce = false }
+        onTap()
     }
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
             if let event = state.currentEvent {
-                EventCard(event: event)
+                EventCard(event: event, warn: settings.warnThreshold, crit: settings.critThreshold)
                     .contentShape(RoundedRectangle(cornerRadius: 18))
-                    .onTapGesture { onTap() }
-            } else if state.hovering {
-                HoverCard(store: store, onTap: onTap)
+                    .onTapGesture { tapped() }
+            } else if state.showsHoverCard {
+                HoverCard(store: store, enabled: enabled,
+                          warn: settings.warnThreshold, crit: settings.critThreshold, onTap: tapped)
             } else {
-                WavePill(store: store)
+                WavePill(store: store, enabled: enabled,
+                         warn: settings.warnThreshold, crit: settings.critThreshold)
                     .contentShape(RoundedRectangle(cornerRadius: 22))
-                    .onTapGesture { onTap() }
+                    .onTapGesture { tapped() }
             }
         }
+        .scaleEffect(bounce ? 0.94 : 1.0)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: cornerRadius))
         .onHover { state.setHover($0) }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
@@ -115,10 +172,14 @@ struct HUDView: View {
 
 struct WavePill: View {
     let store: UsageStore
+    /// 표시할 서비스 (enabled 필터). 기본 전체.
+    var enabled: Set<ServiceID> = Set(ServiceID.allCases)
+    var warn: Double = 70
+    var crit: Double = 90
 
-    /// limits가 있는 서비스 — claude, codex, gemini 고정 순.
+    /// limits가 있고 enabled인 서비스 — claude, codex, gemini 고정 순.
     private var rotationServices: [ServiceID] {
-        ServiceID.allCases.filter { !(store.limits[$0]?.isEmpty ?? true) }
+        ServiceID.allCases.filter { enabled.contains($0) && !(store.limits[$0]?.isEmpty ?? true) }
     }
 
     /// 서비스의 표시 %: session5h 윈도우 우선, 없으면 최댓값 윈도우.
@@ -128,17 +189,37 @@ struct WavePill: View {
         return windows.map(\.usedPercent).max() ?? 0
     }
 
+    /// enabled 서비스 중 최대 사용률 (글로우/대체 % 표기용).
+    private var maxEnabledPercent: Double {
+        ServiceID.allCases
+            .filter { enabled.contains($0) }
+            .compactMap { store.limits[$0]?.map(\.usedPercent).max() }
+            .max() ?? 0
+    }
+
+    /// enabled 서비스만 남긴 recent share (합 1.0 재정규화).
+    private func filteredShare(now: Date) -> [ServiceID: Double] {
+        let full = store.recentShare(now: now).filter { enabled.contains($0.key) }
+        let grand = full.values.reduce(0, +)
+        guard grand > 0 else { return [:] }
+        return full.mapValues { $0 / grand }
+    }
+
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let level = store.activityLevel(now: context.date) // 0...1
             let amplitude = 0.15 + 0.85 * level               // idle에도 잔물결
-            let share = store.recentShare(now: context.date)
+            let share = filteredShare(now: context.date)
             let services = rotationServices
             // 6초마다 로테이션 (limits 서비스 순환)
             let index = services.isEmpty ? 0 : Int(t / 6) % services.count
             let current: ServiceID? = services.isEmpty ? nil : services[index]
-            let percent = current.map(displayPercent) ?? store.maxUsedPercent
+            let percent = current.map(displayPercent) ?? maxEnabledPercent
+            // 한도 임박: 빨강 글로우 호흡 (2초 주기, 추가 타이머 없이 같은 t 재사용).
+            let critical = maxEnabledPercent >= crit
+            let glow = 0.5 + 0.5 * sin(t * (2 * .pi / 2.0)) // 0...1, 2초 주기
+            let glowRadius = critical ? 6 + 8 * glow : 0
 
             HStack(spacing: 8) {
                 waveBars(t: t, amplitude: amplitude, share: share)
@@ -152,7 +233,7 @@ struct WavePill: View {
                     }
                     Text("\(Int(percent))%")
                         .font(.system(size: 11, weight: .bold).monospacedDigit())
-                        .foregroundStyle(Theme.statusColor(percent: percent))
+                        .foregroundStyle(Theme.statusColor(percent: percent, warn: warn, crit: crit))
                 }
                 .id(index)
                 .transition(.asymmetric(
@@ -164,6 +245,7 @@ struct WavePill: View {
             }
             .padding(.horizontal, 13)
             .padding(.vertical, 8)
+            .shadow(color: .red.opacity(critical ? 0.55 * glow + 0.2 : 0), radius: glowRadius)
             .animation(.spring(duration: 0.45), value: index)
         }
     }
@@ -217,6 +299,10 @@ struct WavePill: View {
 
 struct HoverCard: View {
     let store: UsageStore
+    /// 표시할 서비스 (enabled 필터). 기본 전체.
+    var enabled: Set<ServiceID> = Set(ServiceID.allCases)
+    var warn: Double = 70
+    var crit: Double = 90
     var onTap: () -> Void
 
     /// 서비스당 표시 순서: 5h → 주간 → 일일. 존재하는 윈도우만.
@@ -224,7 +310,7 @@ struct HoverCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(ServiceID.allCases) { service in
+            ForEach(ServiceID.allCases.filter { enabled.contains($0) }) { service in
                 serviceBlock(for: service)
             }
         }
@@ -278,7 +364,7 @@ struct HoverCard: View {
     /// leading=false면 헤더 아래 들여쓰기.
     private func metricRow(_ window: LimitWindow) -> some View {
         let percent = window.usedPercent
-        let tint = Theme.statusColor(percent: percent)
+        let tint = Theme.statusColor(percent: percent, warn: warn, crit: crit)
         return HStack(spacing: 6) {
             Text(window.kind.label)
                 .font(.system(size: 9.5, weight: .medium))
@@ -305,50 +391,23 @@ struct HoverCard: View {
 
 struct EventCard: View {
     let event: HUDEvent
+    var warn: Double = 70
+    var crit: Double = 90
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Image(systemName: icon)
+                Image(systemName: event.kind.iconName)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(iconColor)
+                    .foregroundStyle(event.kind.iconColor)
                 Text(event.title).font(.system(size: 12, weight: .bold))
             }
             Text(event.subtitle).font(.system(size: 10.5)).foregroundStyle(.secondary)
             if let percent = event.percent {
-                GaugeBar(percent: percent, tint: Theme.statusColor(percent: percent))
+                GaugeBar(percent: percent, tint: Theme.statusColor(percent: percent, warn: warn, crit: crit))
             }
         }
         .padding(12)
         .frame(width: 230, alignment: .leading)
-    }
-
-    private var icon: String {
-        switch event.kind {
-        case .limitThreshold: return "exclamationmark.triangle.fill"
-        case .depletionRisk: return "hourglass.bottomhalf.filled"
-        case .windowReset: return "sparkles"
-        case .burnSpike: return "flame.fill"
-        case .briefing(let period):
-            switch period {
-            case .morning: return "sun.max.fill"
-            case .lunch: return "gauge.with.needle"
-            case .evening: return "moon.stars.fill"
-            }
-        }
-    }
-    private var iconColor: Color {
-        switch event.kind {
-        case .limitThreshold: return .orange
-        case .depletionRisk: return .orange
-        case .windowReset: return .green
-        case .burnSpike: return .pink
-        case .briefing(let period):
-            switch period {
-            case .morning: return .yellow
-            case .lunch: return .blue
-            case .evening: return .indigo
-            }
-        }
     }
 }

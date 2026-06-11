@@ -112,6 +112,8 @@ public final class DailyStatsStore {
     }
 
     /// 일별×서비스별 토큰 합계 (tokens = 4컬럼 합). 최근 `days`일.
+    /// 반환 순서는 결정적: (day 오름차순, service는 ServiceID.allCases 고정 순).
+    /// 차트 스택/시리즈가 렌더마다 뒤바뀌지 않도록 보장한다.
     public func dailyTotalsByService(days: Int, now: Date, calendar: Calendar = .current) -> [(day: Date, service: ServiceID, tokens: Int)] {
         let cutoff = cutoffDayString(days: days, now: now, calendar: calendar)
         let sql = """
@@ -135,7 +137,13 @@ public final class DailyStatsStore {
             let tokens = Int(sqlite3_column_int64(stmt, 2))
             result.append((day: day, service: service, tokens: tokens))
         }
-        return result
+        // SQL은 (day, service) 그룹의 service 순서를 보장하지 않으므로
+        // (day 오름차순, service는 allCases 인덱스) 고정 순으로 정렬한다.
+        let order = Dictionary(uniqueKeysWithValues: ServiceID.allCases.enumerated().map { ($1, $0) })
+        return result.sorted { a, b in
+            if a.day != b.day { return a.day < b.day }
+            return (order[a.service] ?? 0) < (order[b.service] ?? 0)
+        }
     }
 
     /// project별 토큰 합계 (내림차순). 빈 프로젝트 문자열은 제외. 최근 `days`일.

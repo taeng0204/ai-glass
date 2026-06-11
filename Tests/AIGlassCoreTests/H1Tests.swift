@@ -172,6 +172,47 @@ private let nonSessionMetaLine = """
     #expect(rows.allSatisfy { $0.tokens > 0 })
 }
 
+// ─── ⑤b dailyTotalsByService 정렬 결정성 (추이 차트 순서 고정) ──────────────
+
+@MainActor @Test func dailyTotalsByServiceIsDeterministicallySorted() {
+    let now = ISO8601.date("2026-06-10T12:00:00Z")!
+    let store = UsageStore()
+
+    func ev(_ service: ServiceID, hoursAgo: Double, total: Int) -> (TokenEvent, String?) {
+        let e = TokenEvent(service: service, timestamp: now.addingTimeInterval(-hoursAgo * 3600),
+                           model: "m", inputTokens: total, outputTokens: 0,
+                           cacheReadTokens: 0, cacheCreationTokens: 0)
+        return (e, nil)
+    }
+
+    // 의도적으로 삽입 순서를 allCases 역순/혼합으로 — 정렬이 무시하는지 확인.
+    store.addEvents([
+        ev(.gemini, hoursAgo: 1, total: 30),
+        ev(.claude, hoursAgo: 1, total: 10),
+        ev(.codex,  hoursAgo: 1, total: 20),
+        ev(.codex,  hoursAgo: 25, total: 200),  // 어제
+        ev(.gemini, hoursAgo: 25, total: 100),  // 어제
+        ev(.claude, hoursAgo: 25, total: 300),  // 어제
+    ])
+
+    let rows = store.dailyTotalsByService(days: 7, now: now, calendar: .utc)
+
+    // day 오름차순 보장
+    for i in 1..<rows.count {
+        #expect(rows[i - 1].day <= rows[i].day)
+    }
+    // 같은 day 안에서는 ServiceID.allCases 순서(claude < codex < gemini) 보장
+    let order = Dictionary(uniqueKeysWithValues: ServiceID.allCases.enumerated().map { ($1, $0) })
+    for i in 1..<rows.count where Calendar.utc.isDate(rows[i - 1].day, inSameDayAs: rows[i].day) {
+        #expect(order[rows[i - 1].service]! < order[rows[i].service]!)
+    }
+    // 첫 날(어제)의 서비스 순서가 정확히 [claude, codex, gemini]
+    let cal = Calendar.utc
+    let yesterday = cal.date(byAdding: .day, value: -1, to: cal.startOfDay(for: now))!
+    let yRows = rows.filter { cal.isDate($0.day, inSameDayAs: yesterday) }
+    #expect(yRows.map(\.service) == [.claude, .codex, .gemini])
+}
+
 // ─── ⑥ CodexCollector가 session_meta에서 project 부여 ───────────────────
 
 @MainActor @Test func codexCollectorAssignsProjectFromSessionMeta() throws {

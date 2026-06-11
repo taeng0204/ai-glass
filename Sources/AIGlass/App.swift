@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import AIGlassCore
 import Foundation
+import Carbon.HIToolbox
 
 @main
 enum AIGlassMain {
@@ -48,9 +49,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var dashboardPanel: DashboardPanelController?
     let hudState = HUDState()
     let eventEngine = EventEngine()
+    /// 알림 기록 (대시보드 기록 탭). append 배선은 Y3에서.
+    let eventLog = EventLog()
     var hudController: HUDPanelController?
     var watcher: DirectoryWatcher?
     var hotKey: GlobalHotKey?
+    /// ⌘⇧E — HUD 호버 카드 expand 고정 토글.
+    var expandHotKey: GlobalHotKey?
     let notifier = Notifier()
     /// Keychain 토큰 메모리 캐시 — 매 폴링마다 Keychain 다이얼로그가 뜨는 것을 막는다.
     let claudeTokens = ClaudeTokenProvider(reader: { ClaudeCredentials.fromKeychain() })
@@ -87,8 +92,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dashboardPanel = DashboardPanelController(
             store: store,
             statsStore: statsStore,
+            settings: settings,
+            eventLog: eventLog,
             onRefresh: { [weak self] in self?.refresh() },
-            onClose: {})
+            onClose: {},
+            onSettings: { [weak self] in self?.openSettings() },
+            onReplay: { [weak self] event in self?.hudState.show(event, duration: 2.5) })
 
         hudController = HUDPanelController(store: store, state: hudState, settings: settings) { [weak self] in
             self?.togglePopover()
@@ -100,6 +109,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // 글로벌 단축키 ⌘⇧U → 팝오버 토글 (Carbon 이벤트는 메인 스레드)
         hotKey = GlobalHotKey { [weak self] in
             MainActor.assumeIsolated { self?.togglePopover() }
+        }
+        // ⌘⇧E → HUD expand 고정 토글.
+        expandHotKey = GlobalHotKey(keyCode: kVK_ANSI_E, id: 2) { [weak self] in
+            MainActor.assumeIsolated { self?.hudState.togglePinnedExpand() }
         }
 
         refresh()
@@ -125,8 +138,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func updateStatusTitle() {
-        let percent = store.maxUsedPercent
+        // 메뉴바 %는 켜진(enabled) 에이전트 한정 최대 사용률.
+        let percent = store.maxUsedPercent(in: settings.enabledServices)
         statusItem?.button?.title = percent > 0 ? "✦ \(Int(percent))%" : "✦ –"
+    }
+
+    /// HUD 알림 표시 + 기록(EventLog) 적재. 호버 리플레이는 이 경로를 쓰지 않는다(기록 금지).
+    func showHUD(_ event: HUDEvent, duration: TimeInterval = 6) {
+        hudState.show(event, duration: duration)
+        eventLog.append(event)
     }
 
     func evaluateEvents() {
@@ -142,8 +162,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let reportProvider: (ServiceID) -> String? = { [store] service in
             store.sessionSummary(service: service, from: now.addingTimeInterval(-5 * 3600), to: now)
         }
+        // 꺼진(enabled 아닌) 에이전트는 한도 알림을 발화하지 않도록 필터.
+        let enabledLimits = store.limits.filter { settings.enabledServices.contains($0.key) }
         let events = eventEngine.evaluate(
-            limits: store.limits,
+            limits: enabledLimits,
             burnRate: store.tokensPerMinute(windowMinutes: 10, now: now),
             baseline: store.activeBaselineRate(now: now),
             now: now,
@@ -151,7 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             reportProvider: reportProvider)
         // MVP: 갱신 주기당 최우선 이벤트 1건만 표시 (큐잉은 추후)
         if let first = events.first {
-            hudState.show(first)
+            showHUD(first)
             if settings.notificationsEnabled {
                 notifier.notify(title: first.title, subtitle: first.subtitle)
             }
@@ -221,7 +243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let before = briefingEngine.lastFired
         guard let event = briefingEngine.evaluate(now: now, data: data) else { return }
 
-        hudState.show(event, duration: 10)
+        showHUD(event, duration: 10)
         if settings.notificationsEnabled {
             notifier.notify(title: event.title, subtitle: event.subtitle)
         }

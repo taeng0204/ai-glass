@@ -83,6 +83,12 @@ public final class UsageStore {
         limits.values.flatMap { $0 }.map(\.usedPercent).max() ?? 0
     }
 
+    /// 주어진 서비스 집합 한정 최대 사용률(%). 메뉴바·글로우용 (꺼진 에이전트 제외).
+    public func maxUsedPercent(in services: Set<ServiceID>) -> Double {
+        limits.filter { services.contains($0.key) }
+            .values.flatMap { $0 }.map(\.usedPercent).max() ?? 0
+    }
+
     public func dailyTotals(days: Int, now: Date, calendar: Calendar = .current) -> [(day: Date, tokens: Int)] {
         let today = calendar.startOfDay(for: now)
         var buckets: [Date: Int] = [:]
@@ -184,6 +190,8 @@ public final class UsageStore {
     }
 
     /// 일별×서비스별 토큰 합계. 활동이 있는 조합만 반환 (tokens > 0).
+    /// 반환 순서는 결정적: (day 오름차순, service는 ServiceID.allCases 고정 순).
+    /// 차트 스택/시리즈가 렌더마다 뒤바뀌지 않도록 보장한다.
     public func dailyTotalsByService(days: Int, now: Date, calendar: Calendar = .current) -> [(day: Date, service: ServiceID, tokens: Int)] {
         let today = calendar.startOfDay(for: now)
         var buckets: [Date: [ServiceID: Int]] = [:]
@@ -194,8 +202,11 @@ public final class UsageStore {
         var result: [(day: Date, service: ServiceID, tokens: Int)] = []
         for offset in (0..<days).reversed() {
             let day = calendar.date(byAdding: .day, value: -offset, to: today)!
-            if let svcMap = buckets[day] {
-                for (svc, tokens) in svcMap where tokens > 0 {
+            guard let svcMap = buckets[day] else { continue }
+            // 서비스는 allCases 고정 순으로 (dictionary 순회 비결정성 제거).
+            for svc in ServiceID.allCases {
+                let tokens = svcMap[svc] ?? 0
+                if tokens > 0 {
                     result.append((day: day, service: svc, tokens: tokens))
                 }
             }
@@ -257,5 +268,24 @@ public final class UsageStore {
     /// 3분 창: 30fps 파형의 jitter와 반응성 균형
     public func activityLevel(now: Date) -> Double {
         min(1.0, tokensPerMinute(windowMinutes: 3, now: now) / 100_000.0)
+    }
+
+    /// 서비스의 가장 최근 이벤트 시각 + 윈도우 길이로 근사 리셋 시각을 반환한다.
+    /// - session5h: 마지막 이벤트 + 300분
+    /// - weekly: 마지막 이벤트 + 7일
+    /// - daily: nil (기존 resetsAt 사용)
+    /// 계산 결과가 now 이전이면(이미 리셋됨) nil. 이벤트 없으면 nil.
+    public func approxFullReset(service: ServiceID, kind: LimitWindow.Kind, now: Date) -> Date? {
+        guard kind != .daily else { return nil }
+        let serviceEvents = events.filter { $0.service == service }
+        guard let latest = serviceEvents.map(\.timestamp).max() else { return nil }
+        let interval: TimeInterval
+        switch kind {
+        case .session5h: interval = 300 * 60
+        case .weekly:    interval = 7 * 24 * 3600
+        case .daily:     return nil
+        }
+        let candidate = latest.addingTimeInterval(interval)
+        return candidate > now ? candidate : nil
     }
 }

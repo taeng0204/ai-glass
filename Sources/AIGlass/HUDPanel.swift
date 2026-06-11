@@ -29,7 +29,7 @@ final class HUDPanelController {
         panel.hidesOnDeactivate = false
         panel.isMovableByWindowBackground = true
         panel.contentView = FirstMouseHostingView(
-            rootView: HUDView(store: store, state: state, onTap: onTap))
+            rootView: HUDView(store: store, state: state, settings: settings, onTap: onTap))
 
         restoreFrame(size: size)
 

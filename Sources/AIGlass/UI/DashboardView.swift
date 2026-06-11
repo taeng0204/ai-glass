@@ -6,71 +6,153 @@ struct DashboardView: View {
     let store: UsageStore
     /// 30일 영구 통계 (옵셔널 — nil이면 추이 탭의 30일 토글 숨김).
     var statsStore: DailyStatsStore? = nil
+    let settings: AppSettings
+    /// 알림 기록 (옵셔널 — nil이면 기록 탭은 빈 상태).
+    var eventLog: EventLog? = nil
+    /// 톱니바퀴 → 설정 창 열기.
+    var onSettings: () -> Void = {}
+    /// 기록 행 hover → 알약이 그 알림으로 잠깐 모핑.
+    var onReplay: (HUDEvent) -> Void = { _ in }
+    /// 탭 전환 등 콘텐츠 높이 변화 시 패널 리사이즈 요청.
+    var onResize: () -> Void = {}
     @State private var tab: Tab = .overview
 
     enum Tab: String, CaseIterable, Identifiable {
-        case overview = "개요", trends = "추이", projects = "프로젝트"
+        case overview = "개요", trends = "추이", projects = "프로젝트", history = "기록"
         var id: String { rawValue }
     }
 
+    private static let tabTransition: AnyTransition =
+        .opacity.combined(with: .move(edge: .trailing))
+
     var body: some View {
         VStack(spacing: 12) {
-            Picker("", selection: $tab) {
-                ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            HStack(spacing: 8) {
+                Picker("", selection: $tab) {
+                    ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
 
-            switch tab {
-            case .overview: OverviewTab(store: store)
-            case .trends: TrendsTab(store: store, statsStore: statsStore)
-            case .projects: ProjectsTab(store: store)
+                Button(action: onSettings) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("설정")
             }
+
+            ZStack(alignment: .top) {
+                switch tab {
+                case .overview:
+                    OverviewTab(store: store, settings: settings)
+                        .transition(Self.tabTransition)
+                case .trends:
+                    TrendsTab(store: store, statsStore: statsStore, settings: settings)
+                        .transition(Self.tabTransition)
+                case .projects:
+                    ProjectsTab(store: store, settings: settings)
+                        .transition(Self.tabTransition)
+                case .history:
+                    HistoryTab(eventLog: eventLog, onReplay: onReplay)
+                        .transition(Self.tabTransition)
+                }
+            }
+            .animation(.spring(duration: 0.32), value: tab)
         }
         .padding(14)
         .frame(width: 320)
+        .onChange(of: tab) { onResize() }
     }
 }
 
 private struct OverviewTab: View {
     let store: UsageStore
+    let settings: AppSettings
+
+    /// 서비스당 표시 순서: 5h → 주간 → 일일 (호버 카드와 동일 의미론).
+    private static let kindOrder: [LimitWindow.Kind] = [.session5h, .weekly, .daily]
+
     var body: some View {
         let now = Date()
+        let enabled = ServiceID.allCases.filter { settings.enabledServices.contains($0) }
+        let rows = serviceRows(enabled)
         VStack(spacing: 10) {
-            ForEach(ServiceID.allCases) { service in
-                ServiceRow(service: service,
-                           windows: store.limits[service] ?? [],
-                           depletion: store.depletion(for: service, now: now))
+            ForEach(rows, id: \.service) { row in
+                ServiceRow(service: row.service,
+                           windows: row.windows,
+                           approxReset: { kind in
+                               store.approxFullReset(service: row.service, kind: kind, now: now)
+                           },
+                           depletion: store.depletion(for: row.service, now: now),
+                           warn: settings.warnThreshold,
+                           crit: settings.critThreshold,
+                           staggerBase: row.base)
             }
             HStack(spacing: 8) {
-                StatCard(value: formatTokens(store.todayTokens(now: now)), label: "오늘 토큰")
-                StatCard(value: formatCost(todayCost(now: now)), label: "오늘 비용")
-                StatCard(value: formatTokens(Int(store.tokensPerMinute(windowMinutes: 3, now: now))), label: "현재 t/min")
+                StatCard(value: Double(todayTokens(enabled, now: now)),
+                         format: { formatTokens(Int($0)) }, label: "오늘 토큰")
+                StatCard(value: todayCost(enabled, now: now),
+                         format: formatCost, label: "오늘 비용")
+                StatCard(value: tokensPerMinute(enabled, now: now),
+                         format: { formatTokens(Int($0)) }, label: "현재 t/min")
             }
         }
     }
-    /// 오늘 이벤트의 추정 비용 (API 환산 추정치).
-    private func todayCost(now: Date) -> Double {
+
+    /// 서비스별 정렬 윈도우 + 전체 게이지 행 누적 인덱스(stagger 딜레이용).
+    private func serviceRows(_ services: [ServiceID])
+        -> [(service: ServiceID, windows: [LimitWindow], base: Int)] {
+        var result: [(ServiceID, [LimitWindow], Int)] = []
+        var base = 0
+        for service in services {
+            let all = store.limits[service] ?? []
+            let sorted = Self.kindOrder.compactMap { kind in all.first { $0.kind == kind } }
+            result.append((service, sorted, base))
+            base += max(1, sorted.count)
+        }
+        return result
+    }
+
+    private func todayTokens(_ services: [ServiceID], now: Date) -> Int {
         let start = Calendar.current.startOfDay(for: now)
-        let today = store.events.filter { $0.timestamp >= start }
+        return store.events
+            .filter { services.contains($0.service) && $0.timestamp >= start }
+            .reduce(0) { $0 + $1.totalTokens }
+    }
+    /// 오늘 이벤트의 추정 비용 (API 환산 추정치, enabled 서비스만).
+    private func todayCost(_ services: [ServiceID], now: Date) -> Double {
+        let start = Calendar.current.startOfDay(for: now)
+        let today = store.events.filter { services.contains($0.service) && $0.timestamp >= start }
         return CostEstimator.cost(of: today)
+    }
+    private func tokensPerMinute(_ services: [ServiceID], now: Date) -> Double {
+        services.reduce(0) { $0 + store.tokensPerMinute(service: $1, windowMinutes: 3, now: now) }
     }
     private func formatCost(_ usd: Double) -> String {
         usd < 0.01 ? "$0" : String(format: "~$%.2f", usd)
     }
-    private func formatTokens(_ n: Int) -> String {
-        switch n {
-        case 1_000_000...: return String(format: "%.1fM", Double(n) / 1_000_000)
-        case 1_000...: return String(format: "%.0fK", Double(n) / 1_000)
-        default: return "\(n)"
-        }
+}
+
+private func formatTokens(_ n: Int) -> String {
+    switch n {
+    case 1_000_000...: return String(format: "%.1fM", Double(n) / 1_000_000)
+    case 1_000...: return String(format: "%.0fK", Double(n) / 1_000)
+    default: return "\(n)"
     }
 }
 
+/// 개요 탭 서비스 블록: 헤더(점+이름+최댓값%) 아래 윈도우별 게이지 행.
 private struct ServiceRow: View {
     let service: ServiceID
     let windows: [LimitWindow]
+    let approxReset: (LimitWindow.Kind) -> Date?
     var depletion: Depletion? = nil
+    let warn: Double
+    let crit: Double
+    /// 전체 개요에서 이 서비스 첫 게이지 행의 인덱스 — delay 0.06*i.
+    var staggerBase: Int = 0
 
     private var primary: LimitWindow? {
         windows.max { $0.usedPercent < $1.usedPercent }
@@ -84,12 +166,19 @@ private struct ServiceRow: View {
                 Spacer()
                 Text(primary.map { "\(Int($0.usedPercent))%" } ?? "–")
                     .font(.system(size: 12, weight: .bold).monospacedDigit())
-                    .foregroundStyle(primary.map { Theme.statusColor(percent: $0.usedPercent) } ?? .secondary)
+                    .foregroundStyle(primary.map {
+                        Theme.statusColor(percent: $0.usedPercent, warn: warn, crit: crit)
+                    } ?? .secondary)
             }
-            GaugeBar(percent: primary?.usedPercent ?? 0, tint: Theme.statusColor(percent: primary?.usedPercent ?? 0))
-            Text(subline)
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
+            if windows.isEmpty {
+                Text("데이터 없음")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(Array(windows.enumerated()), id: \.offset) { idx, window in
+                    windowRow(window, delay: 0.06 * Double(staggerBase + idx))
+                }
+            }
             if let depletion, depletion.willDepleteBeforeReset {
                 Text("⚠️ 이 속도면 \(EventEngine.countdown(to: depletion.etaTo100, from: Date())) 후 소진 (리셋 전)")
                     .font(.system(size: 10))
@@ -98,29 +187,70 @@ private struct ServiceRow: View {
         }
     }
 
-    private var subline: String {
-        guard !windows.isEmpty else { return "데이터 없음" }
-        return windows.map { window in
-            var part = "\(window.kind.label) \(Int(window.usedPercent))%"
-            if let resets = window.resetsAt {
-                part += " · 리셋 \(EventEngine.countdown(to: resets, from: Date()))"
-            }
-            return part
-        }.joined(separator: "  ·  ")
+    /// 한 윈도우 줄: 라벨 + 게이지(슈욱) + % + 리셋 카운트다운("~"는 근사).
+    private func windowRow(_ window: LimitWindow, delay: Double) -> some View {
+        let tint = Theme.statusColor(percent: window.usedPercent, warn: warn, crit: crit)
+        return HStack(spacing: 6) {
+            Text(window.kind.label)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 26, alignment: .leading)
+            GaugeBar(percent: window.usedPercent, tint: tint, appearDelay: delay)
+            Text("\(Int(window.usedPercent))%")
+                .font(.system(size: 10, weight: .bold).monospacedDigit())
+                .foregroundStyle(tint)
+                .frame(width: 32, alignment: .trailing)
+            Text(resetLabel(window) ?? "")
+                .font(.system(size: 9).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 52, alignment: .trailing)
+        }
+        .padding(.leading, 14)
+    }
+
+    /// resetsAt 있으면 정확 카운트다운, 없으면 근사 리셋(`~` 표기), 둘 다 없으면 nil.
+    private func resetLabel(_ window: LimitWindow) -> String? {
+        let now = Date()
+        if let resets = window.resetsAt {
+            return EventEngine.countdown(to: resets, from: now)
+        }
+        if let approx = approxReset(window.kind) {
+            return "~" + EventEngine.countdown(to: approx, from: now)
+        }
+        return nil
     }
 }
 
+/// 숫자 카운트업 카드: onAppear 시 0→값을 0.8초 8스텝 보간 (.numericText 전환).
 private struct StatCard: View {
-    let value: String
+    let value: Double
+    let format: (Double) -> String
     let label: String
+    @State private var displayed: Double = 0
+
     var body: some View {
         VStack(spacing: 2) {
-            Text(value).font(.system(size: 14, weight: .bold).monospacedDigit())
+            Text(format(displayed))
+                .font(.system(size: 14, weight: .bold).monospacedDigit())
+                .contentTransition(.numericText())
             Text(label).font(.system(size: 9)).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+        .task {
+            displayed = 0
+            for step in 1...8 {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard !Task.isCancelled else { return }
+                withAnimation(.easeOut(duration: 0.12)) {
+                    displayed = value * Double(step) / 8.0
+                }
+            }
+        }
+        .onChange(of: value) { _, newValue in
+            withAnimation(.spring(duration: 0.4)) { displayed = newValue }
+        }
     }
 }
 
@@ -128,7 +258,10 @@ private struct TrendsTab: View {
     let store: UsageStore
     /// nil이면 30일 토글 숨김.
     var statsStore: DailyStatsStore? = nil
+    let settings: AppSettings
     @State private var range: Range = .week
+    /// onAppear 시 false→true로 바뀌며 막대가 0→값으로 자란다. 탭 재진입마다 재생.
+    @State private var grow = false
 
     enum Range: String, CaseIterable, Identifiable {
         case week = "7일", month = "30일"
@@ -143,15 +276,21 @@ private struct TrendsTab: View {
         let tokens: Int
     }
 
+    private var enabled: [ServiceID] {
+        ServiceID.allCases.filter { settings.enabledServices.contains($0) }
+    }
+
     /// 데이터 소스만 분기: 7일은 store(in-memory), 30일은 statsStore(SQLite, UTC day).
     private var rawData: [(day: Date, service: ServiceID, tokens: Int)] {
+        let rows: [(day: Date, service: ServiceID, tokens: Int)]
         switch range {
         case .week:
-            return store.dailyTotalsByService(days: 7, now: Date())
+            rows = store.dailyTotalsByService(days: 7, now: Date())
         case .month:
             // 저장 포맷이 UTC day이므로 Calendar.utc로 조회해야 일관성 유지.
-            return statsStore?.dailyTotalsByService(days: 30, now: Date(), calendar: .utc) ?? []
+            rows = statsStore?.dailyTotalsByService(days: 30, now: Date(), calendar: .utc) ?? []
         }
+        return rows.filter { settings.enabledServices.contains($0.service) }
     }
 
     var body: some View {
@@ -166,20 +305,23 @@ private struct TrendsTab: View {
             }
             chart
         }
+        .onAppear {
+            grow = false
+            withAnimation(.spring(duration: 0.8)) { grow = true }
+        }
     }
 
     private var chart: some View {
         let data = rawData.map { Point(day: $0.day, service: $0.service, tokens: $0.tokens) }
+        let services = enabled
         return Chart(data) { item in
-            BarMark(x: .value("날짜", item.day, unit: .day), y: .value("토큰", item.tokens))
+            BarMark(x: .value("날짜", item.day, unit: .day),
+                    y: .value("토큰", grow ? item.tokens : 0))
                 .foregroundStyle(by: .value("서비스", item.service.displayName))
                 .cornerRadius(3)
         }
-        .chartForegroundStyleScale([
-            ServiceID.claude.displayName: Theme.color(for: .claude),
-            ServiceID.codex.displayName: Theme.color(for: .codex),
-            ServiceID.gemini.displayName: Theme.color(for: .gemini),
-        ])
+        .chartForegroundStyleScale(domain: services.map(\.displayName),
+                                   range: services.map { Theme.color(for: $0) })
         .chartXAxis {
             AxisMarks(values: .stride(by: .day)) {
                 AxisValueLabel(format: .dateTime.day(), centered: true)
@@ -193,15 +335,17 @@ private struct TrendsTab: View {
 
 private struct ProjectsTab: View {
     let store: UsageStore
+    let settings: AppSettings
+
     var body: some View {
-        let projects = store.projectServiceBreakdown(days: 7, now: Date())
+        let projects = filteredProjects()
         let grandTotal = max(1, projects.reduce(0) { $0 + $1.total })
         VStack(spacing: 8) {
             if projects.isEmpty {
                 Text("최근 7일 데이터 없음").font(.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 80)
             }
-            ForEach(projects.prefix(6), id: \.project) { item in
+            ForEach(Array(projects.prefix(6).enumerated()), id: \.element.project) { idx, item in
                 VStack(alignment: .leading, spacing: 3) {
                     HStack {
                         Text(item.project).font(.system(size: 11, weight: .medium)).lineLimit(1)
@@ -213,7 +357,8 @@ private struct ProjectsTab: View {
                             .font(.system(size: 11).monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
-                    StackBar(byService: item.byService, total: item.total)
+                    StackBar(byService: item.byService, total: item.total,
+                             appearDelay: 0.06 * Double(idx))
                 }
             }
             if !projects.isEmpty {
@@ -223,33 +368,118 @@ private struct ProjectsTab: View {
             }
         }
     }
-    private func formatTokens(_ n: Int) -> String {
-        switch n {
-        case 1_000_000...: return String(format: "%.1fM", Double(n) / 1_000_000)
-        case 1_000...: return String(format: "%.0fK", Double(n) / 1_000)
-        default: return "\(n)"
-        }
+
+    /// enabled 서비스만 남기고 합계 재계산, 0이 된 프로젝트는 제거.
+    private func filteredProjects() -> [(project: String, byService: [ServiceID: Int], total: Int)] {
+        store.projectServiceBreakdown(days: 7, now: Date())
+            .compactMap { item in
+                let filtered = item.byService.filter { settings.enabledServices.contains($0.key) }
+                let total = filtered.values.reduce(0, +)
+                guard total > 0 else { return nil }
+                return (project: item.project, byService: filtered, total: total)
+            }
+            .sorted { $0.total > $1.total }
     }
 }
 
 /// 프로젝트 행의 서비스별 색 비례 세그먼트 스택 (높이 6, Capsule 클립).
+/// onAppear 시 폭 0→값으로 자라며 행별 stagger.
 private struct StackBar: View {
     let byService: [ServiceID: Int]
     let total: Int
+    var appearDelay: Double = 0
+    @State private var appeared = false
+
     var body: some View {
         GeometryReader { geo in
             let denom = Double(max(1, total))
+            let factor = appeared ? 1.0 : 0.0
             HStack(spacing: 0) {
                 ForEach(ServiceID.allCases) { service in
                     let tokens = byService[service] ?? 0
                     if tokens > 0 {
                         Theme.color(for: service)
-                            .frame(width: geo.size.width * Double(tokens) / denom)
+                            .frame(width: geo.size.width * Double(tokens) / denom * factor)
                     }
                 }
             }
         }
         .frame(height: 6)
         .clipShape(Capsule())
+        .onAppear {
+            withAnimation(.spring(duration: 0.7).delay(appearDelay)) { appeared = true }
+        }
+    }
+}
+
+/// 기록 탭: 최근 알림(최신 앞). 행 hover 시 알약이 그 알림으로 잠깐 모핑(onReplay).
+private struct HistoryTab: View {
+    let eventLog: EventLog?
+    var onReplay: (HUDEvent) -> Void
+
+    var body: some View {
+        let records = eventLog?.records ?? []
+        if records.isEmpty {
+            VStack(spacing: 6) {
+                Image(systemName: "bell.slash")
+                    .font(.system(size: 20))
+                    .foregroundStyle(.tertiary)
+                Text("아직 알림이 없어요")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, minHeight: 120)
+        } else {
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(records) { record in
+                        HistoryRow(record: record, onReplay: onReplay)
+                    }
+                }
+            }
+            .frame(height: min(CGFloat(records.count) * 42 + 8, 300))
+        }
+    }
+}
+
+private struct HistoryRow: View {
+    let record: EventLog.Record
+    var onReplay: (HUDEvent) -> Void
+    @State private var hovering = false
+
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .short
+        f.locale = Locale(identifier: "ko_KR")
+        return f
+    }()
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: record.event.kind.iconName)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(record.event.kind.iconColor)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(record.event.title)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(record.event.subtitle)
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            Text(Self.relativeFormatter.localizedString(for: record.date, relativeTo: Date()))
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.vertical, 5)
+        .padding(.horizontal, 6)
+        .background(hovering ? AnyShapeStyle(.quaternary.opacity(0.6)) : AnyShapeStyle(.clear),
+                    in: RoundedRectangle(cornerRadius: 8))
+        .onHover { inside in
+            hovering = inside
+            if inside { onReplay(record.event) }
+        }
     }
 }
