@@ -5,10 +5,16 @@ enum Theme {
     static let safeGreen = Color(red: 0.35, green: 0.82, blue: 0.54)
 
     static func color(for service: ServiceID) -> Color {
+        let c = rgb(for: service)
+        return Color(red: c.r, green: c.g, blue: c.b)
+    }
+
+    /// 서비스 색의 RGB 성분 (혼합색 계산용).
+    static func rgb(for service: ServiceID) -> (r: Double, g: Double, b: Double) {
         switch service {
-        case .claude: return Color(red: 0.93, green: 0.60, blue: 0.47)  // 테라코타 파스텔 #EE9978
-        case .codex: return Color(red: 0.31, green: 0.79, blue: 0.64)   // ChatGPT 그린 파스텔 #4FC9A3
-        case .gemini: return Color(red: 0.47, green: 0.66, blue: 0.97)  // 구글 블루 파스텔 #78A8F7
+        case .claude: return (0.93, 0.60, 0.47)  // 테라코타 파스텔 #EE9978
+        case .codex: return (0.31, 0.79, 0.64)   // ChatGPT 그린 파스텔 #4FC9A3
+        case .gemini: return (0.47, 0.66, 0.97)  // 구글 블루 파스텔 #78A8F7
         }
     }
     /// 사용률 상태 색. warn/crit은 설정 임계값 주입용 (기본 70/90 — 기존 호출부 호환).

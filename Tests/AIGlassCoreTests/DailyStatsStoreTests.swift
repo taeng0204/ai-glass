@@ -101,3 +101,113 @@ private func tempDBPath() -> String {
     let cost = store.totalCost(days: 7, now: now, calendar: .utc)
     #expect(abs(cost - 30.0) < 1e-6)
 }
+
+@MainActor @Test func totalCostFromToExcludesOutOfRangeDays() {
+    let store = try! #require(DailyStatsStore(path: tempDBPath()))
+    // 같은 모델, 같은 비용($30씩)을 D1·D2·D3에 하루씩 적재.
+    func ev(_ iso: String) -> TokenEvent {
+        TokenEvent(service: .claude, timestamp: ISO8601.date(iso)!, model: "claude-opus-4-8",
+                   inputTokens: 1_000_000, outputTokens: 1_000_000,
+                   cacheReadTokens: 0, cacheCreationTokens: 0, project: "p")
+    }
+    store.upsert(events: [ev("2026-06-01T12:00:00Z"),
+                          ev("2026-06-02T12:00:00Z"),
+                          ev("2026-06-03T12:00:00Z")], calendar: .utc)
+    // [06-02, 06-03) → 06-02만 포함 = $30.
+    let from = ISO8601.date("2026-06-02T00:00:00Z")!
+    let to = ISO8601.date("2026-06-03T00:00:00Z")!
+    let cost = store.totalCost(from: from, to: to, calendar: .utc)
+    #expect(abs(cost - 30.0) < 1e-6)
+}
+
+// MARK: - percent_snapshots
+
+@MainActor @Test func percentSnapshotRoundTripAndReplace() {
+    let store = try! #require(DailyStatsStore(path: tempDBPath()))
+    let day0 = ISO8601.date("2026-06-08T03:00:00Z")!
+    let day1 = day0.addingTimeInterval(86400)
+    let day2 = day0.addingTimeInterval(2 * 86400)
+    store.recordPercentSnapshot(service: .claude, kind: .weekly, percent: 10, day: day0)
+    store.recordPercentSnapshot(service: .claude, kind: .weekly, percent: 25, day: day1)
+    // 같은 날 재기록 → REPLACE로 마지막 값만 남음
+    store.recordPercentSnapshot(service: .claude, kind: .weekly, percent: 40, day: day2)
+    store.recordPercentSnapshot(service: .claude, kind: .weekly, percent: 55, day: day2)
+    // 다른 kind/service는 섞이지 않음
+    store.recordPercentSnapshot(service: .claude, kind: .session5h, percent: 99, day: day2)
+    store.recordPercentSnapshot(service: .codex, kind: .weekly, percent: 99, day: day2)
+
+    let snaps = store.percentSnapshots(service: .claude, kind: .weekly, days: 8, now: day2)
+    #expect(snaps.map(\.percent) == [10, 25, 55])
+    // day 오름차순
+    for i in 1..<snaps.count { #expect(snaps[i - 1].day < snaps[i].day) }
+}
+
+@MainActor @Test func percentSnapshotDayRangeFilters() {
+    let store = try! #require(DailyStatsStore(path: tempDBPath()))
+    let now = ISO8601.date("2026-06-10T12:00:00Z")!
+    store.recordPercentSnapshot(service: .claude, kind: .weekly, percent: 5,
+                                day: now.addingTimeInterval(-40 * 86400))
+    store.recordPercentSnapshot(service: .claude, kind: .weekly, percent: 50, day: now)
+    let snaps = store.percentSnapshots(service: .claude, kind: .weekly, days: 8, now: now)
+    #expect(snaps.map(\.percent) == [50])  // 40일 전은 범위 밖
+}
+
+// MARK: - 신기록 / 스트릭 (v0.9 A2)
+
+@MainActor @Test func maxDailyTokensExcludesToday() {
+    let store = try! #require(DailyStatsStore(path: tempDBPath()))
+    let now = ISO8601.date("2026-06-10T12:00:00Z")!
+    func ev(_ ts: Date, _ tk: Int) -> TokenEvent {
+        TokenEvent(service: .claude, timestamp: ts, model: "m",
+                   inputTokens: tk, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0)
+    }
+    let d8 = now.addingTimeInterval(-2 * 86400)  // 2일 전: 500
+    let d9 = now.addingTimeInterval(-1 * 86400)  // 1일 전: 800
+    store.upsert(events: [ev(d8, 500), ev(d9, 800), ev(now, 9999)], calendar: .utc)
+    // 오늘(now) 제외 최대 = 800
+    let max = store.maxDailyTokens(excludingDay: now, calendar: .utc)
+    #expect(max == 800)
+}
+
+@MainActor @Test func maxDailyTokensNilWhenNoOtherDays() {
+    let store = try! #require(DailyStatsStore(path: tempDBPath()))
+    let now = ISO8601.date("2026-06-10T12:00:00Z")!
+    let e = TokenEvent(service: .claude, timestamp: now, model: "m",
+                       inputTokens: 100, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0)
+    store.upsert(events: [e], calendar: .utc)
+    #expect(store.maxDailyTokens(excludingDay: now, calendar: .utc) == nil)  // 오늘만 있음 → nil
+}
+
+@MainActor @Test func streakDaysCountsConsecutive() {
+    let store = try! #require(DailyStatsStore(path: tempDBPath()))
+    let now = ISO8601.date("2026-06-10T12:00:00Z")!
+    func ev(_ daysAgo: Int, _ tk: Int) -> TokenEvent {
+        TokenEvent(service: .claude, timestamp: now.addingTimeInterval(Double(-daysAgo) * 86400), model: "m",
+                   inputTokens: tk, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0)
+    }
+    // 오늘/어제/그제 모두 토큰 > 0 → 3일 연속
+    store.upsert(events: [ev(0, 10), ev(1, 20), ev(2, 30)], calendar: .utc)
+    #expect(store.streakDays(endingOn: now, calendar: .utc) == 3)
+}
+
+@MainActor @Test func streakDaysBreaksOnGap() {
+    let store = try! #require(DailyStatsStore(path: tempDBPath()))
+    let now = ISO8601.date("2026-06-10T12:00:00Z")!
+    func ev(_ daysAgo: Int, _ tk: Int) -> TokenEvent {
+        TokenEvent(service: .claude, timestamp: now.addingTimeInterval(Double(-daysAgo) * 86400), model: "m",
+                   inputTokens: tk, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0)
+    }
+    // 오늘/어제는 있으나 그제(2일 전)는 공백 → 3일 전 활동은 단절로 무시 → streak 2
+    store.upsert(events: [ev(0, 10), ev(1, 20), ev(3, 30)], calendar: .utc)
+    #expect(store.streakDays(endingOn: now, calendar: .utc) == 2)
+}
+
+@MainActor @Test func streakDaysZeroWhenTodayEmpty() {
+    let store = try! #require(DailyStatsStore(path: tempDBPath()))
+    let now = ISO8601.date("2026-06-10T12:00:00Z")!
+    // 어제까지만 활동, 오늘은 0 → 오늘 포함 기준이므로 streak 0
+    let e = TokenEvent(service: .claude, timestamp: now.addingTimeInterval(-86400), model: "m",
+                       inputTokens: 10, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0)
+    store.upsert(events: [e], calendar: .utc)
+    #expect(store.streakDays(endingOn: now, calendar: .utc) == 0)
+}

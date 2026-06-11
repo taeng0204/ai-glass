@@ -57,6 +57,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// ⌘⇧E — HUD 호버 카드 expand 고정 토글.
     var expandHotKey: GlobalHotKey?
     let notifier = Notifier()
+    /// 오늘 누적 토큰 마일스톤 추적 (날짜 바뀌면 내부 리셋).
+    let milestoneTracker = MilestoneTracker()
+    /// 신기록 알림을 보낸 날짜(UTC yyyy-MM-dd) — 하루 1회만 발화. UserDefaults에 영속화
+    /// (재시작해도 같은 날 중복 발화 방지).
+    private static let recordFiredDayKey = "aiglass.recordFiredDay"
+    private var recordFiredDay: String? {
+        get { UserDefaults.standard.string(forKey: Self.recordFiredDayKey) }
+        set { UserDefaults.standard.set(newValue, forKey: Self.recordFiredDayKey) }
+    }
     /// Keychain 토큰 메모리 캐시 — 매 폴링마다 Keychain 다이얼로그가 뜨는 것을 막는다.
     let claudeTokens = ClaudeTokenProvider(reader: { ClaudeCredentials.fromKeychain() })
     /// 시간대별 1회 브리핑 엔진. lastFired는 UserDefaults에 저장/복원.
@@ -73,6 +82,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var lastUpsertAt: Date = .distantPast
     /// 설정 창 (중복 생성 방지).
     private var settingsWindow: NSWindow?
+    /// 온보딩 위저드 창 (중복 생성 방지).
+    private var onboardingWindow: NSWindow?
     lazy var claudeCollector = ClaudeCollector(
         root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects"))
     lazy var codexCollector = CodexCollector(
@@ -135,28 +146,137 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.pollClaudeLimits() }
         }
+
+        // 첫 실행 온보딩: 미완료면 약간의 지연 후 띄운다(메뉴바/HUD 자리잡은 뒤).
+        if !settings.onboardingCompleted {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                self?.openOnboarding()
+            }
+        }
     }
 
+    /// 온보딩 위저드 창을 연다. 이미 떠 있으면 앞으로 가져온다.
+    @objc func openOnboarding() {
+        if let win = onboardingWindow {
+            NSApp.activate(ignoringOtherApps: true)
+            win.makeKeyAndOrderFront(nil)
+            return
+        }
+        let view = OnboardingView(settings: settings, onFinish: { [weak self] in
+            self?.onboardingWindow?.close()
+        })
+        let hosting = NSHostingController(rootView: view)
+        let win = NSWindow(contentViewController: hosting)
+        win.title = "AI Glass 시작하기"
+        win.styleMask = [.titled, .closable]
+        win.isReleasedWhenClosed = false
+        win.center()
+        win.delegate = self
+        onboardingWindow = win
+        NSApp.activate(ignoringOtherApps: true)
+        win.makeKeyAndOrderFront(nil)
+    }
+
+    /// 마지막으로 set한 메뉴바 상태 키 — 동일 값 재설정 생략 (깜빡임 방지).
+    private var lastMenubarKey: String?
+
+    /// 메뉴바 타이틀을 현재 모드/캐시값으로 갱신한다. 자동 로테이션 없음 — refresh에 편승.
+    /// collect 호출 금지(store 캐시만 읽음), 이전 값과 동일하면 set 생략.
     func updateStatusTitle() {
-        // 메뉴바 %는 켜진(enabled) 에이전트 한정 최대 사용률.
-        let percent = store.maxUsedPercent(in: settings.enabledServices)
-        statusItem?.button?.title = percent > 0 ? "✦ \(Int(percent))%" : "✦ –"
+        guard let button = statusItem?.button else { return }
+        let now = Date()
+        switch settings.menubarMode {
+        case .todayTokens:
+            let tokens = store.todayTokens(now: now)
+            setPlainTitle(tokens > 0 ? "✦ \(Self.formatTokens(tokens))" : "✦ –", on: button)
+
+        case .burnRate:
+            let burn = store.tokensPerMinute(windowMinutes: 5, now: now)
+            setPlainTitle(burn > 0 ? "✦ \(Self.formatRate(burn))" : "✦ –", on: button)
+
+        case .maxPercent:
+            let percent = store.maxUsedPercent(in: settings.enabledServices)
+            setPlainTitle(percent > 0 ? "✦ \(Int(percent))%" : "✦ –", on: button)
+
+        case .iconOnly:
+            // "✦"만 + 위험도 색. 색 단계가 같으면 set 생략.
+            let percent = store.maxUsedPercent(in: settings.enabledServices)
+            let stage = percent >= settings.critThreshold ? "crit"
+                      : percent >= settings.warnThreshold ? "warn" : "ok"
+            let key = "icon:\(stage)"
+            guard lastMenubarKey != key else { return }
+            lastMenubarKey = key
+            button.title = ""
+            button.attributedTitle = NSAttributedString(string: "✦", attributes: [
+                .foregroundColor: statusNSColor(percent: percent),
+                .font: NSFont.menuBarFont(ofSize: 0),
+            ])
+        }
+    }
+
+    /// 일반 텍스트 타이틀 set — 직전과 동일하면 생략.
+    private func setPlainTitle(_ title: String, on button: NSStatusBarButton) {
+        let key = "title:\(title)"
+        guard lastMenubarKey != key else { return }
+        lastMenubarKey = key
+        button.attributedTitle = NSAttributedString(string: "") // iconOnly 잔존 색 제거
+        button.title = title
+    }
+
+    private func statusNSColor(percent: Double) -> NSColor {
+        if percent >= settings.critThreshold { return .systemRed }
+        if percent >= settings.warnThreshold { return .systemOrange }
+        return NSColor(red: 0.35, green: 0.82, blue: 0.54, alpha: 1)
+    }
+
+    static func formatTokens(_ n: Int) -> String {
+        switch n {
+        case 1_000_000_000...: return String(format: "%.1fB", Double(n) / 1_000_000_000)
+        case 1_000_000...: return String(format: "%.0fM", Double(n) / 1_000_000)
+        case 1_000...: return String(format: "%.0fK", Double(n) / 1_000)
+        default: return "\(n)"
+        }
+    }
+
+    /// 분당 토큰 소모 속도 ("38K/m").
+    static func formatRate(_ perMinute: Double) -> String {
+        let n = Int(perMinute.rounded())
+        switch n {
+        case 1_000_000...: return String(format: "%.1fM/m", Double(n) / 1_000_000)
+        case 1_000...: return String(format: "%.0fK/m", Double(n) / 1_000)
+        default: return "\(n)/m"
+        }
     }
 
     /// HUD 알림 표시 + 기록(EventLog) 적재. 호버 리플레이는 이 경로를 쓰지 않는다(기록 금지).
     func showHUD(_ event: HUDEvent, duration: TimeInterval = 6) {
         hudState.show(event, duration: duration)
         eventLog.append(event)
+        // 사운드: 알림성 kind일 때만 (설정 가드).
+        if settings.funSoundEnabled, Self.isAlertingKind(event.kind) {
+            SoundPlayer.play()
+        }
+    }
+
+    /// 사운드를 울릴 알림성 이벤트인지 (threshold/depletion/milestone/record).
+    private static func isAlertingKind(_ kind: HUDEvent.Kind) -> Bool {
+        switch kind {
+        case .limitThreshold, .depletionRisk, .milestone, .record: return true
+        default: return false
+        }
     }
 
     func evaluateEvents() {
         let now = Date()
         // 설정 임계값 주입.
         eventEngine.thresholds = [Int(settings.warnThreshold), Int(settings.critThreshold)]
-        // 서비스별 소진 예측.
-        var depletions: [ServiceID: Depletion] = [:]
+        // 서비스별 소진 예측: 5h(store, 분 단위 기울기) + 주간(statsStore 스냅샷 → 일단위 추정).
+        var depletions: [ServiceID: [Depletion]] = [:]
         for service in ServiceID.allCases {
-            if let d = store.depletion(for: service, now: now) { depletions[service] = d }
+            var list: [Depletion] = []
+            if let d = store.depletion(for: service, now: now) { list.append(d) }
+            if let w = weeklyDepletion(for: service, now: now) { list.append(w) }
+            if !list.isEmpty { depletions[service] = list }
         }
         // 세션 리포트: windowReset 발화 시 직전 5h 윈도우 요약을 subtitle로.
         let reportProvider: (ServiceID) -> String? = { [store] service in
@@ -225,6 +345,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard now.timeIntervalSince(lastUpsertAt) >= 60 else { return }
         lastUpsertAt = now
         statsStore.upsert(events: store.events, calendar: .utc)
+        recordPercentSnapshots(now: now)
+        evaluateFun(now: now, statsStore: statsStore)
+    }
+
+    /// 마일스톤/신기록 체크 (60초 디바운스 지점, 스냅샷 기록과 함께).
+    private func evaluateFun(now: Date, statsStore: DailyStatsStore) {
+        let todayTokens = store.todayTokens(now: now)
+
+        // 마일스톤: 오늘 누적이 새 임계 돌파 시 1회.
+        if settings.funMilestone,
+           let crossed = milestoneTracker.check(todayTokens: todayTokens, day: now, calendar: .utc) {
+            showHUD(HUDEvent(kind: .milestone,
+                             title: "오늘 \(Self.formatTokens(crossed)) 돌파! 🎉",
+                             subtitle: "오늘 누적 \(Self.formatTokens(todayTokens)) tokens",
+                             percent: nil))
+        }
+
+        // 신기록: 오늘 누적 > 종전 최대(오늘 제외) && 종전 > 0, 하루 1회.
+        if settings.funRecord {
+            let dayStr = Self.utcDayString(now)
+            if recordFiredDay != dayStr,
+               let prevMax = statsStore.maxDailyTokens(excludingDay: now, calendar: .utc),
+               prevMax > 0, todayTokens > prevMax {
+                recordFiredDay = dayStr
+                showHUD(HUDEvent(kind: .record,
+                                 title: "오늘 신기록! 🏆",
+                                 subtitle: "종전 \(Self.formatTokens(prevMax))",
+                                 percent: nil))
+            }
+        }
+    }
+
+    private static let utcDayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.timeZone = TimeZone(identifier: "UTC")!
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    private static func utcDayString(_ date: Date) -> String {
+        utcDayFormatter.string(from: date)
+    }
+
+    /// 현재 limits의 각 윈도우 사용률(%)을 (오늘 UTC) percent_snapshots에 기록한다.
+    /// REPLACE라 하루 동안 마지막 관측값만 남는다 — 주간 일단위 소진 추정의 입력.
+    private func recordPercentSnapshots(now: Date) {
+        guard let statsStore else { return }
+        for (service, windows) in store.limits {
+            for window in windows {
+                statsStore.recordPercentSnapshot(service: service, kind: window.kind,
+                                                 percent: window.usedPercent, day: now)
+            }
+        }
+    }
+
+    /// statsStore의 percent 스냅샷으로 주간 한도의 일단위 소진을 추정한다.
+    /// 현재 주간 윈도우가 있어야 하며, 그 resetsAt 기준 `willDepleteBeforeReset`일 때만 의미.
+    private func weeklyDepletion(for service: ServiceID, now: Date) -> Depletion? {
+        guard let statsStore,
+              let weekly = store.limits[service]?.first(where: { $0.kind == .weekly }) else { return nil }
+        let snapshots = statsStore.percentSnapshots(service: service, kind: .weekly, days: 8, now: now)
+        guard let rate = DepletionEstimator.weeklyDailyRate(snapshots: snapshots) else { return nil }
+        guard let d = DepletionEstimator.weeklyDepletion(current: weekly.usedPercent, rate: rate,
+                                                         resetsAt: weekly.resetsAt, now: now) else { return nil }
+        return d.willDepleteBeforeReset ? d : nil
     }
 
     // MARK: - 브리핑
@@ -285,6 +472,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             data.yesterdayCost = max(0, statsStore.totalCost(days: 2, now: now, calendar: .utc)
                                      - statsStore.totalCost(days: 1, now: now, calendar: .utc))
             // 어제 top project는 projectBreakdown이 오늘 포함이라 부정확 → 생략(nil).
+
+            // 스트릭 (funStreak 가드): 오늘부터 거꾸로 연속 토큰>0 일수.
+            if settings.funStreak {
+                data.streakDays = statsStore.streakDays(endingOn: now, calendar: .utc)
+            }
+
+            // 주간 리포트 (funWeeklyReport 가드, 월요일 morning에만 BriefingEngine이 사용).
+            if settings.funWeeklyReport {
+                fillWeeklyReport(&data, statsStore: statsStore, now: now, calendar: calendar)
+            }
         }
 
         // 오늘: store.
@@ -302,6 +499,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         return data
+    }
+
+    /// 월요일 주간 리포트 4필드를 채운다 — dailyTotalsByService(days:14)로 지난주/전전주 분리.
+    /// "지난주" = now 직전 7일(어제 포함 7일), "전주" = 그 이전 7일.
+    private func fillWeeklyReport(_ data: inout BriefingEngine.BriefingData,
+                                  statsStore: DailyStatsStore, now: Date, calendar: Calendar) {
+        let startOfToday = calendar.startOfDay(for: now)
+        // 지난주 경계: [today-7, today), 전주: [today-14, today-7).
+        guard let lastWeekStart = calendar.date(byAdding: .day, value: -7, to: startOfToday),
+              let prevWeekStart = calendar.date(byAdding: .day, value: -14, to: startOfToday) else { return }
+
+        let rows = statsStore.dailyTotalsByService(days: 14, now: now, calendar: .utc)
+        var lastWeek = 0
+        var prevWeek = 0
+        for row in rows {
+            if row.day >= lastWeekStart && row.day < startOfToday {
+                lastWeek += row.tokens
+            } else if row.day >= prevWeekStart && row.day < lastWeekStart {
+                prevWeek += row.tokens
+            }
+        }
+        guard lastWeek > 0 else { return }
+        data.lastWeekTokens = lastWeek
+        data.prevWeekTokens = prevWeek
+        // 지난주 비용 = [D-7, 오늘) 정확 범위. (이전엔 14일-7일 = 전전주 비용이 섞였음.)
+        data.lastWeekCost = statsStore.totalCost(from: lastWeekStart, to: startOfToday, calendar: .utc)
+        // 지난주 top project: 14일 breakdown 중 최대 (정밀 일별 분리 미지원 — 근사).
+        data.lastWeekTopProject = statsStore.projectBreakdown(days: 14, now: now, calendar: .utc).first?.project
     }
 
     @objc func statusItemClicked() {
@@ -351,7 +576,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             win.makeKeyAndOrderFront(nil)
             return
         }
-        let view = SettingsView(settings: settings, hudController: hudController)
+        let view = SettingsView(settings: settings, hudController: hudController,
+                                onMenubarModeChange: { [weak self] in self?.updateStatusTitle() },
+                                onReplayOnboarding: { [weak self] in self?.openOnboarding() })
         let hosting = NSHostingController(rootView: view)
         let win = NSWindow(contentViewController: hosting)
         win.title = "AI Glass 설정"
@@ -365,8 +592,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        if (notification.object as? NSWindow) === settingsWindow {
+        let win = notification.object as? NSWindow
+        if win === settingsWindow {
             settingsWindow = nil
+        } else if win === onboardingWindow {
+            onboardingWindow = nil
         }
     }
 

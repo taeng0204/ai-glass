@@ -45,6 +45,16 @@ public final class DailyStatsStore {
             sqlite3_close(db)
             return nil
         }
+        let createSnapshots = """
+        CREATE TABLE IF NOT EXISTS percent_snapshots(
+            day TEXT, service TEXT, kind TEXT, percent REAL,
+            PRIMARY KEY(day, service, kind)
+        )
+        """
+        guard sqlite3_exec(db, createSnapshots, nil, nil, nil) == SQLITE_OK else {
+            sqlite3_close(db)
+            return nil
+        }
     }
 
     deinit {
@@ -195,5 +205,133 @@ public final class DailyStatsStore {
             total += CostEstimator.cost(of: synth)
         }
         return total
+    }
+
+    /// 명시적 일 범위 `[from, to)`(UTC day 기준, from 포함·to 제외)의 추정 비용 합계(USD).
+    /// `totalCost(days:)`가 "최근 N일"만 지원해 주간 리포트의 지난주 [D-7, D-1] 비용을
+    /// 정확히 못 구하던 문제를 해결한다(전전주 비용이 섞였음).
+    public func totalCost(from: Date, to: Date, calendar: Calendar = .current) -> Double {
+        let fromStr = Self.dayFormatter.string(from: from)
+        let toStr = Self.dayFormatter.string(from: to)
+        let sql = """
+        SELECT model, SUM(input), SUM(output), SUM(cache_read), SUM(cache_create)
+        FROM daily_stats WHERE day >= ? AND day < ?
+        GROUP BY model
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, fromStr, -1, Self.SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, toStr, -1, Self.SQLITE_TRANSIENT)
+
+        var total = 0.0
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let modelC = sqlite3_column_text(stmt, 0) else { continue }
+            let model = String(cString: modelC)
+            let synth = TokenEvent(service: .claude, timestamp: from, model: model,
+                                   inputTokens: Int(sqlite3_column_int64(stmt, 1)),
+                                   outputTokens: Int(sqlite3_column_int64(stmt, 2)),
+                                   cacheReadTokens: Int(sqlite3_column_int64(stmt, 3)),
+                                   cacheCreationTokens: Int(sqlite3_column_int64(stmt, 4)))
+            total += CostEstimator.cost(of: synth)
+        }
+        return total
+    }
+
+    // MARK: - 신기록 / 스트릭 (재미 로직)
+
+    /// 일별 토큰 합(4컬럼 합)의 **최댓값**을 반환한다. `excludingDay`에 해당하는 날(UTC)은 제외.
+    /// 다른 날이 하나도 없으면 nil (신기록 비교 기준이 없음).
+    public func maxDailyTokens(excludingDay: Date, calendar: Calendar = .current) -> Int? {
+        let excludeStr = Self.dayFormatter.string(from: excludingDay)
+        let sql = """
+        SELECT day, SUM(input + output + cache_read + cache_create) AS total
+        FROM daily_stats WHERE day <> ?
+        GROUP BY day ORDER BY total DESC LIMIT 1
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, excludeStr, -1, Self.SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return Int(sqlite3_column_int64(stmt, 1))
+    }
+
+    /// `endingOn`(오늘)부터 거꾸로 **연속으로 토큰 > 0**인 일수.
+    /// 오늘 토큰이 0이면 streak 0 (오늘 포함 기준). 중간 공백을 만나면 중단.
+    public func streakDays(endingOn: Date, calendar: Calendar = .current) -> Int {
+        // 토큰 > 0 인 날들의 day 문자열 집합.
+        let sql = """
+        SELECT day FROM daily_stats
+        GROUP BY day HAVING SUM(input + output + cache_read + cache_create) > 0
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
+        defer { sqlite3_finalize(stmt) }
+        var activeDays = Set<String>()
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let dayC = sqlite3_column_text(stmt, 0) else { continue }
+            activeDays.insert(String(cString: dayC))
+        }
+
+        var count = 0
+        var cursor = calendar.startOfDay(for: endingOn)
+        while true {
+            let dayStr = Self.dayFormatter.string(from: cursor)
+            guard activeDays.contains(dayStr) else { break }
+            count += 1
+            guard let prev = calendar.date(byAdding: .day, value: -1, to: cursor) else { break }
+            cursor = prev
+        }
+        return count
+    }
+
+    // MARK: - percent 스냅샷 (주간 일단위 소진 추정용)
+
+    /// (day, service, kind)에 사용률(%) 스냅샷을 `INSERT OR REPLACE`로 기록한다.
+    /// REPLACE이므로 같은 날 여러 번 호출하면 **마지막 관측값**만 남는다.
+    /// `day`는 UTC "yyyy-MM-dd"로 정규화된다 (daily_stats와 동일 기준).
+    public func recordPercentSnapshot(service: ServiceID, kind: LimitWindow.Kind, percent: Double, day: Date) {
+        let dayStr = Self.dayFormatter.string(from: day)
+        let sql = """
+        INSERT OR REPLACE INTO percent_snapshots(day, service, kind, percent)
+        VALUES (?, ?, ?, ?)
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, dayStr, -1, Self.SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, service.rawValue, -1, Self.SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 3, kind.rawValue, -1, Self.SQLITE_TRANSIENT)
+        sqlite3_bind_double(stmt, 4, percent)
+        sqlite3_step(stmt)
+    }
+
+    /// (service, kind)의 최근 `days`일 percent 스냅샷을 day 오름차순으로 반환한다.
+    /// day는 UTC 자정 Date로 복원된다.
+    public func percentSnapshots(service: ServiceID, kind: LimitWindow.Kind, days: Int,
+                                 now: Date = Date(), calendar: Calendar = .utc) -> [(day: Date, percent: Double)] {
+        let cutoff = cutoffDayString(days: days, now: now, calendar: calendar)
+        let sql = """
+        SELECT day, percent FROM percent_snapshots
+        WHERE service = ? AND kind = ? AND day >= ?
+        ORDER BY day
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, service.rawValue, -1, Self.SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, kind.rawValue, -1, Self.SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 3, cutoff, -1, Self.SQLITE_TRANSIENT)
+
+        var result: [(day: Date, percent: Double)] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let dayC = sqlite3_column_text(stmt, 0) else { continue }
+            let dayStr = String(cString: dayC)
+            guard let day = Self.dayFormatter.date(from: dayStr) else { continue }
+            let percent = sqlite3_column_double(stmt, 1)
+            result.append((day: day, percent: percent))
+        }
+        return result
     }
 }

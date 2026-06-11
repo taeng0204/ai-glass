@@ -30,16 +30,31 @@ public final class BriefingEngine {
         public var todayTokens: Int
         public var todayCost: Double
         public var todayTopService: (service: ServiceID, share: Double)?
+        // 주간 리포트용 (월요일 morning 특별판). 기본 nil이면 일반 morning.
+        public var lastWeekTokens: Int?
+        public var lastWeekCost: Double?
+        public var prevWeekTokens: Int?
+        public var lastWeekTopProject: String?
+        /// 연속 사용일수 (오늘 포함, 끊김 없는 토큰>0). morning 부제에 N≥2일 때 " · {N}일 연속 🔥".
+        public var streakDays: Int
         public init(yesterdayTokens: Int = 0, yesterdayCost: Double = 0,
                     yesterdayTopProject: String? = nil,
                     todayTokens: Int = 0, todayCost: Double = 0,
-                    todayTopService: (service: ServiceID, share: Double)? = nil) {
+                    todayTopService: (service: ServiceID, share: Double)? = nil,
+                    lastWeekTokens: Int? = nil, lastWeekCost: Double? = nil,
+                    prevWeekTokens: Int? = nil, lastWeekTopProject: String? = nil,
+                    streakDays: Int = 0) {
             self.yesterdayTokens = yesterdayTokens
             self.yesterdayCost = yesterdayCost
             self.yesterdayTopProject = yesterdayTopProject
             self.todayTokens = todayTokens
             self.todayCost = todayCost
             self.todayTopService = todayTopService
+            self.lastWeekTokens = lastWeekTokens
+            self.lastWeekCost = lastWeekCost
+            self.prevWeekTokens = prevWeekTokens
+            self.lastWeekTopProject = lastWeekTopProject
+            self.streakDays = streakDays
         }
     }
 
@@ -71,10 +86,18 @@ public final class BriefingEngine {
     private func makeEvent(period: Period, now: Date, data: BriefingData) -> HUDEvent? {
         switch period {
         case .morning:
+            // 월요일(weekday == 2) morning이고 지난주 데이터가 있으면 주간 리포트 특별판.
+            if calendar.component(.weekday, from: now) == 2,
+               let lastWeekTokens = data.lastWeekTokens, lastWeekTokens > 0 {
+                return makeWeeklyReport(now: now, data: data, lastWeekTokens: lastWeekTokens)
+            }
             guard data.yesterdayTokens > 0 || data.yesterdayCost > 0 else { return nil }
             var subtitle = "어제: \(Self.formatTokens(data.yesterdayTokens)) tokens · ~\(Self.formatCost(data.yesterdayCost))"
             if let project = data.yesterdayTopProject {
                 subtitle += " · 주로 \(project)"
+            }
+            if data.streakDays >= 2 {
+                subtitle += " · \(data.streakDays)일 연속 🔥"
             }
             return HUDEvent(kind: .briefing(.morning), title: "어제 사용 브리핑",
                             subtitle: subtitle, percent: nil)
@@ -101,6 +124,25 @@ public final class BriefingEngine {
             return HUDEvent(kind: .briefing(.evening), title: "오늘 사용 요약",
                             subtitle: subtitle, percent: nil)
         }
+    }
+
+    /// 월요일 morning 주간 리포트 특별판. kind는 .briefing(.morning) 유지(하루 1회 발화 공유).
+    private func makeWeeklyReport(now: Date, data: BriefingData, lastWeekTokens: Int) -> HUDEvent {
+        var subtitle = "지난주 \(Self.formatTokens(lastWeekTokens))"
+        if let cost = data.lastWeekCost {
+            subtitle += " (~\(Self.formatCost(cost)))"
+        }
+        if let project = data.lastWeekTopProject {
+            subtitle += " · 주로 \(project)"
+        }
+        // 전주 대비 % 는 prevWeekTokens > 0 일 때만.
+        if let prev = data.prevWeekTokens, prev > 0 {
+            let delta = Double(lastWeekTokens - prev) / Double(prev) * 100
+            let sign = delta >= 0 ? "+" : ""
+            subtitle += " · 전주 대비 \(sign)\(Int(delta.rounded()))%"
+        }
+        return HUDEvent(kind: .briefing(.morning), title: "주간 리포트 📊",
+                        subtitle: subtitle, percent: nil)
     }
 
     static func formatTokens(_ n: Int) -> String {

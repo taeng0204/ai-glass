@@ -75,7 +75,7 @@ struct DashboardView: View {
                 // 첫 오픈과 동일하게 재생된다 (전환 중 복귀 시 뷰 재사용 방지).
                 switch tab {
                 case .overview:
-                    OverviewTab(store: store, settings: settings)
+                    OverviewTab(store: store, statsStore: statsStore, settings: settings)
                         .id(tabVisit)
                         .transition(Self.tabTransition)
                 case .trends:
@@ -103,6 +103,7 @@ struct DashboardView: View {
 
 private struct OverviewTab: View {
     let store: UsageStore
+    var statsStore: DailyStatsStore? = nil
     let settings: AppSettings
 
     /// 서비스당 표시 순서: 5h → 주간 → 일일 (호버 카드와 동일 의미론).
@@ -119,7 +120,7 @@ private struct OverviewTab: View {
                            approxReset: { kind in
                                store.approxFullReset(service: row.service, kind: kind, now: now)
                            },
-                           depletion: store.depletion(for: row.service, now: now),
+                           depletions: depletions(for: row.service, now: now),
                            warn: settings.warnThreshold,
                            crit: settings.critThreshold,
                            staggerBase: row.base)
@@ -133,6 +134,24 @@ private struct OverviewTab: View {
                          format: { formatTokens(Int($0)) }, label: "현재 t/min")
             }
         }
+    }
+
+    /// 서비스의 윈도우별 소진 예측 (kind → Depletion). 5h는 store, 주간은 statsStore 스냅샷 기반.
+    /// 둘 다 `willDepleteBeforeReset`일 때만 포함된다 (App.evaluateEvents와 동일 규칙).
+    private func depletions(for service: ServiceID, now: Date) -> [LimitWindow.Kind: Depletion] {
+        var result: [LimitWindow.Kind: Depletion] = [:]
+        if let d = store.depletion(for: service, now: now) { result[d.kind] = d }
+        if let statsStore,
+           let weekly = store.limits[service]?.first(where: { $0.kind == .weekly }) {
+            let snapshots = statsStore.percentSnapshots(service: service, kind: .weekly, days: 8, now: now)
+            if let rate = DepletionEstimator.weeklyDailyRate(snapshots: snapshots),
+               let w = DepletionEstimator.weeklyDepletion(current: weekly.usedPercent, rate: rate,
+                                                          resetsAt: weekly.resetsAt, now: now),
+               w.willDepleteBeforeReset {
+                result[.weekly] = w
+            }
+        }
+        return result
     }
 
     /// 서비스별 정렬 윈도우 + 전체 게이지 행 누적 인덱스(stagger 딜레이용).
@@ -182,7 +201,8 @@ private struct ServiceRow: View {
     let service: ServiceID
     let windows: [LimitWindow]
     let approxReset: (LimitWindow.Kind) -> Date?
-    var depletion: Depletion? = nil
+    /// 윈도우 kind별 소진 경고 (해당 윈도우 행 바로 아래에 표시).
+    var depletions: [LimitWindow.Kind: Depletion] = [:]
     let warn: Double
     let crit: Double
     /// 전체 개요에서 이 서비스 첫 게이지 행의 인덱스 — delay 0.06*i.
@@ -211,13 +231,30 @@ private struct ServiceRow: View {
             } else {
                 ForEach(Array(windows.enumerated()), id: \.offset) { idx, window in
                     windowRow(window, delay: 0.06 * Double(staggerBase + idx))
+                    if let depletion = depletions[window.kind], depletion.willDepleteBeforeReset {
+                        depletionLine(depletion)
+                    }
                 }
             }
-            if let depletion, depletion.willDepleteBeforeReset {
-                Text("⚠️ 이 속도면 \(EventEngine.countdown(to: depletion.etaTo100, from: Date())) 후 소진 (리셋 전)")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.orange)
-            }
+        }
+    }
+
+    /// 윈도우별 소진 경고 줄 — 해당 윈도우 행 바로 아래.
+    /// 5h: ⚠️ + orange(긴급), 주간: ⚠️ 없이 secondary(차분한 추세 안내).
+    @ViewBuilder
+    private func depletionLine(_ depletion: Depletion) -> some View {
+        let now = Date()
+        switch depletion.kind {
+        case .weekly:
+            Text("이 추세면 약 \(EventEngine.daysUntil(depletion.etaTo100, from: now))일 후 소진")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .padding(.leading, 14)
+        default:
+            Text("⚠️ 이 속도면 \(EventEngine.countdown(to: depletion.etaTo100, from: now)) 후 5h 한도 소진")
+                .font(.system(size: 10))
+                .foregroundStyle(.orange)
+                .padding(.leading, 14)
         }
     }
 
@@ -262,7 +299,7 @@ private struct ServiceRow: View {
     }
 }
 
-/// 숫자 카운트업 카드: onAppear 시 0→값을 0.8초 8스텝 보간 (.numericText 전환).
+/// 숫자 카운트업 카드: onAppear 시 0→값을 0.45초 6스텝 보간 (.numericText 전환).
 private struct StatCard: View {
     let value: Double
     let format: (Double) -> String
@@ -281,11 +318,11 @@ private struct StatCard: View {
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
         .task {
             displayed = 0
-            for step in 1...8 {
-                try? await Task.sleep(for: .milliseconds(100))
+            for step in 1...6 {
+                try? await Task.sleep(for: .milliseconds(75))
                 guard !Task.isCancelled else { return }
-                withAnimation(.easeOut(duration: 0.12)) {
-                    displayed = value * Double(step) / 8.0
+                withAnimation(.easeOut(duration: 0.09)) {
+                    displayed = value * Double(step) / 6.0
                 }
             }
         }
@@ -301,8 +338,9 @@ private struct TrendsTab: View {
     var statsStore: DailyStatsStore? = nil
     let settings: AppSettings
     @State private var range: Range = .week
-    /// onAppear 시 false→true로 바뀌며 막대가 0→값으로 자란다. 탭 재진입마다 재생.
-    @State private var grow = false
+    /// 0.0→1.0으로 증가하며 BarMark y값에만 곱해진다.
+    /// 축/눈금/레이아웃은 최종 데이터로 고정되어 움직이지 않는다.
+    @State private var growFactor: Double = 0
 
     enum Range: String, CaseIterable, Identifiable {
         case week = "7일", month = "30일"
@@ -310,11 +348,13 @@ private struct TrendsTab: View {
         var days: Int { self == .week ? 7 : 30 }
     }
 
+    /// id가 (day, service)로 안정적이어야 growFactor 변화 시 Chart가 같은 바로 인식해
+    /// y값을 보간(차오름)한다. UUID()는 body 평가마다 바뀌어 애니메이션이 끊겼다.
     private struct Point: Identifiable {
-        let id = UUID()
         let day: Date
         let service: ServiceID
         let tokens: Int
+        var id: String { "\(day.timeIntervalSinceReferenceDate)-\(service.rawValue)" }
     }
 
     private var enabled: [ServiceID] {
@@ -334,6 +374,23 @@ private struct TrendsTab: View {
         return rows.filter { settings.enabledServices.contains($0.service) }
     }
 
+    /// 일별 서비스 합산 최댓값 (y축 도메인 고정용).
+    private var maxDailyStack: Double {
+        let byDay = Dictionary(grouping: rawData, by: { $0.day })
+        let maxStack = byDay.values.map { $0.reduce(0) { $0 + $1.tokens } }.max() ?? 0
+        return Double(max(1, maxStack))
+    }
+
+    /// 전체 날짜 범위 (x축 도메인 고정: 오늘 기준 days일 전 ~ 오늘).
+    private var xDomain: ClosedRange<Date> {
+        let now = Date()
+        let start = Calendar.current.startOfDay(for: now)
+            .addingTimeInterval(-Double(range.days - 1) * 86400)
+        let end = Calendar.current.startOfDay(for: now)
+            .addingTimeInterval(86400)
+        return start...end
+    }
+
     var body: some View {
         VStack(spacing: 8) {
             if statsStore != nil {
@@ -343,26 +400,39 @@ private struct TrendsTab: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .controlSize(.small)
+                .onChange(of: range) { _, _ in startGrow() }
             }
             chart
         }
-        .onAppear {
-            grow = false
-            withAnimation(.spring(duration: 0.8)) { grow = true }
+        .onAppear { startGrow() }
+    }
+
+    /// 0 프레임을 무애니메이션으로 먼저 커밋한 뒤 다음 틱에 1로 스프링 — 같은 트랜잭션에서
+    /// 0→1을 연달아 쓰면 리셋이 합쳐져 성장이 생략될 수 있다 (range 전환 시).
+    private func startGrow() {
+        var tx = Transaction()
+        tx.disablesAnimations = true
+        withTransaction(tx) { growFactor = 0 }
+        Task { @MainActor in
+            withAnimation(.spring(duration: 0.8)) { growFactor = 1 }
         }
     }
 
     private var chart: some View {
         let data = rawData.map { Point(day: $0.day, service: $0.service, tokens: $0.tokens) }
         let services = enabled
+        let maxY = maxDailyStack * 1.05
+        let factor = growFactor
         return Chart(data) { item in
             BarMark(x: .value("날짜", item.day, unit: .day),
-                    y: .value("토큰", grow ? item.tokens : 0))
+                    y: .value("토큰", Double(item.tokens) * factor))
                 .foregroundStyle(by: .value("서비스", item.service.displayName))
                 .cornerRadius(3)
         }
         .chartForegroundStyleScale(domain: services.map(\.displayName),
                                    range: services.map { Theme.color(for: $0) })
+        .chartXScale(domain: xDomain)
+        .chartYScale(domain: 0...maxY)
         .chartXAxis {
             AxisMarks(values: .stride(by: .day)) {
                 AxisValueLabel(format: .dateTime.day(), centered: true)

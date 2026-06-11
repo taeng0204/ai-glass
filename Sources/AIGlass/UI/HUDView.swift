@@ -100,6 +100,8 @@ extension HUDEvent.Kind {
         case .windowReset: return "sparkles"
         case .burnSpike: return "flame.fill"
         case .comeback: return "figure.wave"
+        case .milestone: return "party.popper.fill"
+        case .record: return "trophy.fill"
         case .briefing(let period):
             switch period {
             case .morning: return "sun.max.fill"
@@ -115,6 +117,8 @@ extension HUDEvent.Kind {
         case .windowReset: return .green
         case .burnSpike: return .pink
         case .comeback: return .cyan
+        case .milestone: return .yellow
+        case .record: return .orange
         case .briefing(let period):
             switch period {
             case .morning: return .yellow
@@ -161,7 +165,8 @@ struct HUDView: View {
                 WavePill(store: store, enabled: enabled,
                          warn: settings.warnThreshold, crit: settings.critThreshold,
                          showsPercent: settings.hudShowsPercent,
-                         showsCountdown: settings.hudShowsCountdown)
+                         showsCountdown: settings.hudShowsCountdown,
+                         waveStyle: settings.waveStyle)
                     .contentShape(RoundedRectangle(cornerRadius: 22))
                     .onTapGesture { tapped() }
             }
@@ -184,6 +189,8 @@ struct WavePill: View {
     var showsPercent: Bool = true
     /// 리셋 카운트다운(작은 회색) 표시 여부 (설정 hudShowsCountdown).
     var showsCountdown: Bool = true
+    /// 웨이브 스타일 (설정 waveStyle). 기본 펄스 바.
+    var waveStyle: WaveStyle = .pulseBars
 
     /// limits가 있고 enabled인 서비스 — claude, codex, gemini 고정 순.
     private var rotationServices: [ServiceID] {
@@ -249,9 +256,12 @@ struct WavePill: View {
             let countdown = (showsCountdown && current != nil)
                 ? resetCountdown(current!, now: context.date) : nil
 
+            let input = WaveInput(t: t, level: level, amplitude: amplitude,
+                                  share: share, current: current, percent: percent)
+
             HStack(spacing: 8) {
-                waveBars(t: t, amplitude: amplitude, share: share)
-                    .frame(height: 16)
+                waveView(input)
+                    .frame(width: waveStyle.areaWidth, height: 16)
                 // 점+%+카운트다운 묶음: 로테이션(index) 변화 시 위↔아래 슬라이드 전환.
                 HStack(spacing: 4) {
                     if let current {
@@ -286,50 +296,16 @@ struct WavePill: View {
         }
     }
 
-    /// 7개 바(높이 애니메이션) HStack을 mask로, share 누적 가로 그라데이션을 fill.
-    private func waveBars(t: Double, amplitude: Double, share: [ServiceID: Double]) -> some View {
-        let mask = HStack(spacing: 2.5) {
-            ForEach(0..<7, id: \.self) { i in
-                let phase = t * (2.2 + Double(i) * 0.13) + Double(i) * 0.9
-                let h = 4 + 12 * amplitude * (0.5 + 0.5 * sin(phase))
-                Capsule().frame(width: 3, height: h)
-            }
+    /// 설정된 스타일에 맞는 웨이브 서브뷰. 입력(share/level/amplitude/percent)은 공통.
+    @ViewBuilder
+    private func waveView(_ input: WaveInput) -> some View {
+        switch waveStyle {
+        case .pulseBars: PulseBarsWave(input: input)
+        case .smoothWave: SmoothWave(input: input)
+        case .waterFill: WaterFillWave(input: input)
+        case .orbGlow: OrbGlowWave(input: input)
+        case .heartbeat: HeartbeatWave(input: input)
         }
-        .frame(height: 16)
-        // Rectangle은 greedy라 가용 폭 전체로 확장되어 알약이 길어진다.
-        // 바 7개×폭3 + 간격6×2.5 = 21 + 15 = 36pt로 고정.
-        return Rectangle()
-            .fill(waveGradient(share: share))
-            .mask(mask)
-            .frame(width: 7 * 3 + 6 * 2.5, height: 16)
-    }
-
-    /// share 비례 누적 위치에 서비스 색을 배치한 가로 그라데이션.
-    /// 경계마다 ±0.08 오프셋 stop을 두어 부드럽게 블렌딩. 활동 없으면 보라-파랑.
-    private func waveGradient(share: [ServiceID: Double]) -> LinearGradient {
-        let active = ServiceID.allCases.compactMap { svc -> (ServiceID, Double)? in
-            guard let s = share[svc], s > 0 else { return nil }
-            return (svc, s)
-        }
-        guard !active.isEmpty else {
-            return LinearGradient(colors: [.purple.opacity(0.9), .blue.opacity(0.7)],
-                                  startPoint: .leading, endPoint: .trailing)
-        }
-        var stops: [Gradient.Stop] = []
-        var cursor = 0.0
-        for (i, entry) in active.enumerated() {
-            let (svc, frac) = entry
-            let c = Theme.color(for: svc)
-            let start = cursor
-            let end = cursor + frac
-            // 경계 블렌딩: 시작은 +0.08 이전부터(첫 세그먼트 제외), 끝은 -0.08 이후까지.
-            let blendStart = i == 0 ? start : max(start, start - 0.08)
-            let blendEnd = i == active.count - 1 ? 1.0 : min(1.0, end - 0.08)
-            stops.append(.init(color: c, location: blendStart))
-            stops.append(.init(color: c, location: max(blendStart, blendEnd)))
-            cursor = end
-        }
-        return LinearGradient(stops: stops, startPoint: .leading, endPoint: .trailing)
     }
 }
 
