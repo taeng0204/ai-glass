@@ -37,8 +37,10 @@ public enum AntigravityLogParser {
 
     /// Antigravity CLI 로그에서 실제 모델 요청(`streamGenerateContent`) 시각을 추출한다.
     /// 로그 라인은 `I0611 23:20:50.123456 ... streamGenerateContent ...` 형식이고,
-    /// 파일명(`cli-YYYYMMDD_HHMMSS.log`)에서 year를 주입받는다.
-    public static func modelRequestDates(logData: Data, year: Int,
+    /// glog 라인에는 연도가 없어 파일명(`cli-YYYYMMDD_HHMMSS.log`)의 연도를 주입받는다.
+    /// `fileStartMonth`(파일 생성 월)를 주면, 한 세션이 해를 넘겨 기록한 경우
+    /// (예: 12월 생성 파일에 1월 로그) 연도를 +1 보정한다.
+    public static func modelRequestDates(logData: Data, year: Int, fileStartMonth: Int? = nil,
                                          calendar: Calendar = .current) -> [Date] {
         guard let text = String(data: logData, encoding: .utf8) else { return [] }
         var result: [Date] = []
@@ -59,9 +61,14 @@ public enum AntigravityLogParser {
             let hour = Int(String(chars[6...7])) ?? 0
             let minute = Int(String(chars[9...10])) ?? 0
             let second = Int(String(chars[12...13])) ?? 0
+            // 파일은 append-only이므로 로그 월이 파일 생성 월보다 작으면 해가 바뀐 것.
+            var effectiveYear = year
+            if let fileStartMonth, month < fileStartMonth {
+                effectiveYear += 1
+            }
             var components = DateComponents()
             components.calendar = calendar
-            components.year = year
+            components.year = effectiveYear
             components.month = month
             components.day = day
             components.hour = hour
