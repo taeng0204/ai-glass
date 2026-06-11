@@ -83,6 +83,12 @@ public final class UsageStore {
         limits.values.flatMap { $0 }.map(\.usedPercent).max() ?? 0
     }
 
+    /// 주어진 서비스 집합 한정 최대 사용률(%). 메뉴바·글로우용 (꺼진 에이전트 제외).
+    public func maxUsedPercent(in services: Set<ServiceID>) -> Double {
+        limits.filter { services.contains($0.key) }
+            .values.flatMap { $0 }.map(\.usedPercent).max() ?? 0
+    }
+
     public func dailyTotals(days: Int, now: Date, calendar: Calendar = .current) -> [(day: Date, tokens: Int)] {
         let today = calendar.startOfDay(for: now)
         var buckets: [Date: Int] = [:]
@@ -184,6 +190,8 @@ public final class UsageStore {
     }
 
     /// 일별×서비스별 토큰 합계. 활동이 있는 조합만 반환 (tokens > 0).
+    /// 반환 순서는 결정적: (day 오름차순, service는 ServiceID.allCases 고정 순).
+    /// 차트 스택/시리즈가 렌더마다 뒤바뀌지 않도록 보장한다.
     public func dailyTotalsByService(days: Int, now: Date, calendar: Calendar = .current) -> [(day: Date, service: ServiceID, tokens: Int)] {
         let today = calendar.startOfDay(for: now)
         var buckets: [Date: [ServiceID: Int]] = [:]
@@ -194,8 +202,11 @@ public final class UsageStore {
         var result: [(day: Date, service: ServiceID, tokens: Int)] = []
         for offset in (0..<days).reversed() {
             let day = calendar.date(byAdding: .day, value: -offset, to: today)!
-            if let svcMap = buckets[day] {
-                for (svc, tokens) in svcMap where tokens > 0 {
+            guard let svcMap = buckets[day] else { continue }
+            // 서비스는 allCases 고정 순으로 (dictionary 순회 비결정성 제거).
+            for svc in ServiceID.allCases {
+                let tokens = svcMap[svc] ?? 0
+                if tokens > 0 {
                     result.append((day: day, service: svc, tokens: tokens))
                 }
             }

@@ -59,8 +59,12 @@ struct SettingsView: View {
             }
 
             Section {
-                Text("전역 단축키: ⌘⇧U")
-                    .font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("전역 단축키")
+                    Text("⌘⇧U  대시보드 토글")
+                    Text("⌘⇧E  HUD 호버 카드 고정")
+                }
+                .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

@@ -1,14 +1,15 @@
 import AppKit
 import Carbon.HIToolbox
 
-/// 글로벌 단축키 ⌘⇧U (Carbon RegisterEventHotKey — 접근성 권한 불필요).
+/// 글로벌 단축키 (Carbon RegisterEventHotKey — 접근성 권한 불필요).
+/// 기본 ⌘⇧U(대시보드 토글). keyCode/id를 주입하면 다른 키도 등록 가능 (예: ⌘⇧E).
 /// Carbon hot-key 이벤트는 메인 스레드에서 디스패치된다.
 final class GlobalHotKey {
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandler: EventHandlerRef?
     private let onPress: () -> Void
 
-    init(onPress: @escaping () -> Void) {
+    init(keyCode: Int = kVK_ANSI_U, id: UInt32 = 1, onPress: @escaping () -> Void) {
         self.onPress = onPress
 
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
@@ -29,9 +30,9 @@ final class GlobalHotKey {
             selfPtr,
             &eventHandler)
 
-        let hotKeyID = EventHotKeyID(signature: OSType(0x4147_4C53), id: 1) // 'AGLS'
+        let hotKeyID = EventHotKeyID(signature: OSType(0x4147_4C53), id: id) // 'AGLS'
         RegisterEventHotKey(
-            UInt32(kVK_ANSI_U),
+            UInt32(keyCode),
             UInt32(cmdKey | shiftKey),
             hotKeyID,
             GetApplicationEventTarget(),
