@@ -131,11 +131,13 @@ extension WaveInput {
         }
         var stops: [Gradient.Stop] = []
         var cursor = 0.0
+        // 경계를 ±0.04 블렌딩 — 회전(굴림) 시 색이 칼같이 끊기지 않고 흐르듯 섞인다.
+        let blend = 0.04
         for (svc, frac) in active {
             let c = Theme.color(for: svc)
-            stops.append(.init(color: c, location: cursor))
+            stops.append(.init(color: c, location: min(1.0, cursor + blend)))
             cursor += frac
-            stops.append(.init(color: c, location: min(1.0, cursor)))
+            stops.append(.init(color: c, location: max(0.0, min(1.0, cursor - blend))))
         }
         // 원형으로 닫히도록 첫 색을 끝에 한 번 더.
         if let first = active.first { stops.append(.init(color: Theme.color(for: first.0), location: 1.0)) }
@@ -266,6 +268,9 @@ struct OrbGlowWave: View {
         // 여러 서비스 색이 구슬에 함께 비치게 한다. glow는 대표(평균)색으로 은은히.
         let grad = input.orbGradient
         let glowColor = input.mixedColor
+        // 색이 구슬 표면을 따라 계속 굴러가는 흐름 — 회전 속도는 상수(위상 점프 방지),
+        // 느린 wobble을 더해 등속 회전의 기계적인 느낌을 깬다. 하이라이트(광원)는 회전 밖.
+        let roll = Angle.degrees(input.t * 55 + 14 * sin(input.t * 0.7))
         ZStack {
             Circle()
                 .fill(glowColor.opacity(0.25))
@@ -273,6 +278,7 @@ struct OrbGlowWave: View {
                 .scaleEffect(scale * 1.25)
             Circle()
                 .fill(grad)
+                .rotationEffect(roll)
                 .scaleEffect(scale)
                 .overlay(
                     Circle()
