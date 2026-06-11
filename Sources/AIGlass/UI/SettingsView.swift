@@ -1,7 +1,7 @@
 import SwiftUI
 import AIGlassCore
 
-/// 설정 창. 임계값/HUD/알림/자동시작/Gemini 쿼터를 조정한다.
+/// 설정 창. 임계값/HUD/알림/자동시작/Antigravity 쿼터를 조정한다.
 /// 변경은 AppSettings(UserDefaults)에 즉시 반영되며, HUD 표시는 hudController로 바로 토글된다.
 struct SettingsView: View {
     @Bindable var settings: AppSettings
@@ -40,7 +40,7 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Gemini") {
+            Section("Antigravity") {
                 TextField("일일 쿼터", value: $settings.geminiDailyQuota, format: .number)
                     .frame(width: 100)
                 Text("재시작 후 적용")

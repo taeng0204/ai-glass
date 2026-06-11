@@ -143,21 +143,28 @@ struct WavePill: View {
             HStack(spacing: 8) {
                 waveBars(t: t, amplitude: amplitude, share: share)
                     .frame(height: 16)
+                // 점+% 묶음: 로테이션(index) 변화 시 위↔아래 슬라이드 전환.
                 HStack(spacing: 4) {
                     if let current {
                         Circle()
                             .fill(Theme.color(for: current))
                             .frame(width: 6, height: 6)
-                            .animation(.easeInOut(duration: 0.45), value: index)
                     }
                     Text("\(Int(percent))%")
                         .font(.system(size: 11, weight: .bold).monospacedDigit())
                         .foregroundStyle(Theme.statusColor(percent: percent))
-                        .animation(.easeInOut(duration: 0.45), value: index)
                 }
+                .id(index)
+                .transition(.asymmetric(
+                    insertion: .move(edge: .bottom).combined(with: .opacity),
+                    removal: .move(edge: .top).combined(with: .opacity)
+                ))
+                .frame(width: 44, height: 16)
+                .clipped()
             }
             .padding(.horizontal, 13)
             .padding(.vertical, 8)
+            .animation(.spring(duration: 0.45), value: index)
         }
     }
 
@@ -171,9 +178,12 @@ struct WavePill: View {
             }
         }
         .frame(height: 16)
+        // Rectangle은 greedy라 가용 폭 전체로 확장되어 알약이 길어진다.
+        // 바 7개×폭3 + 간격6×2.5 = 21 + 15 = 36pt로 고정.
         return Rectangle()
             .fill(waveGradient(share: share))
             .mask(mask)
+            .frame(width: 7 * 3 + 6 * 2.5, height: 16)
     }
 
     /// share 비례 누적 위치에 서비스 색을 배치한 가로 그라데이션.
@@ -209,10 +219,13 @@ struct HoverCard: View {
     let store: UsageStore
     var onTap: () -> Void
 
+    /// 서비스당 표시 순서: 5h → 주간 → 일일. 존재하는 윈도우만.
+    private static let kindOrder: [LimitWindow.Kind] = [.session5h, .weekly, .daily]
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(ServiceID.allCases) { service in
-                row(for: service)
+                serviceBlock(for: service)
             }
         }
         .padding(12)
@@ -221,46 +234,72 @@ struct HoverCard: View {
         .onTapGesture { onTap() }
     }
 
-    private func maxPercent(_ service: ServiceID) -> Double? {
-        guard let windows = store.limits[service], !windows.isEmpty else { return nil }
-        return windows.map(\.usedPercent).max()
+    /// 서비스가 가진 윈도우를 표시 순서대로 정렬해 반환.
+    private func windows(for service: ServiceID) -> [LimitWindow] {
+        guard let windows = store.limits[service], !windows.isEmpty else { return [] }
+        return Self.kindOrder.compactMap { kind in windows.first(where: { $0.kind == kind }) }
     }
 
-    /// session5h 윈도우(없으면 최댓값 윈도우)의 resetsAt. nil이면 카운트다운 생략.
-    private func resetCountdown(_ service: ServiceID) -> String? {
-        guard let windows = store.limits[service], !windows.isEmpty else { return nil }
-        let window = windows.first(where: { $0.kind == .session5h })
-            ?? windows.max(by: { $0.usedPercent < $1.usedPercent })
-        guard let resetsAt = window?.resetsAt else { return nil }
+    private func countdown(_ window: LimitWindow) -> String? {
+        guard let resetsAt = window.resetsAt else { return nil }
         return EventEngine.countdown(to: resetsAt, from: Date())
     }
 
+    /// 서비스명+점은 첫 줄에만, 이후 줄은 들여쓰기. 윈도우 없으면 단일 "–" 줄.
     @ViewBuilder
-    private func row(for service: ServiceID) -> some View {
-        let percent = maxPercent(service)
-        let countdown = resetCountdown(service)
-        VStack(alignment: .trailing, spacing: 1) {
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(Theme.color(for: service))
-                    .frame(width: 6, height: 6)
-                Text(service.displayName)
-                    .font(.system(size: 10.5, weight: .semibold))
-                Spacer(minLength: 4)
-                GaugeBar(percent: percent ?? 0,
-                         tint: percent.map { Theme.statusColor(percent: $0) } ?? .gray)
-                    .frame(width: 64)
-                Text(percent.map { "\(Int($0))%" } ?? "–")
-                    .font(.system(size: 10.5, weight: .bold).monospacedDigit())
-                    .foregroundStyle(percent.map { Theme.statusColor(percent: $0) } ?? .secondary)
-                    .frame(width: 34, alignment: .trailing)
-            }
-            if let countdown {
-                Text("리셋 \(countdown)")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
+    private func serviceBlock(for service: ServiceID) -> some View {
+        let rows = windows(for: service)
+        VStack(alignment: .leading, spacing: 3) {
+            if rows.isEmpty {
+                header(service: service)
+            } else {
+                ForEach(Array(rows.enumerated()), id: \.offset) { idx, window in
+                    if idx == 0 {
+                        header(service: service)
+                    }
+                    metricRow(window, leading: idx == 0)
+                }
             }
         }
+    }
+
+    /// 서비스명 + 점 (첫 줄 헤더).
+    private func header(service: ServiceID) -> some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(Theme.color(for: service))
+                .frame(width: 6, height: 6)
+            Text(service.displayName)
+                .font(.system(size: 10.5, weight: .semibold))
+        }
+    }
+
+    /// 한 윈도우 줄: 라벨 + 게이지 + % + 리셋 카운트다운.
+    /// leading=false면 헤더 아래 들여쓰기.
+    private func metricRow(_ window: LimitWindow, leading: Bool) -> some View {
+        let percent = window.usedPercent
+        let tint = Theme.statusColor(percent: percent)
+        return HStack(spacing: 6) {
+            Text(window.kind.label)
+                .font(.system(size: 9.5, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 26, alignment: .leading)
+            GaugeBar(percent: percent, tint: tint)
+                .frame(width: 50)
+            Text("\(Int(percent))%")
+                .font(.system(size: 10, weight: .bold).monospacedDigit())
+                .foregroundStyle(tint)
+                .frame(width: 30, alignment: .trailing)
+            if let cd = countdown(window) {
+                Text(cd)
+                    .font(.system(size: 8.5).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 40, alignment: .trailing)
+            } else {
+                Spacer(minLength: 0).frame(width: 40)
+            }
+        }
+        .padding(.leading, 14)
     }
 }
 
