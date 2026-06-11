@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/hud-pill.png" width="420" alt="플로팅 HUD 알약">
+  <img src="docs/images/hud-pill.png" width="326" alt="플로팅 HUD 알약">
 </p>
 
 화면 우상단에 항상 떠 있는 **펄스 웨이브 알약**이 AI 코딩 에이전트들의 토큰 소모를 실시간으로 보여줍니다. 토큰이 빨리 탈수록 파도가 크게 출렁이고, 색 띠는 지금 어떤 에이전트가 일하는지 알려줍니다. 한도가 임박하면 알약이 카드로 모핑되며 경고하고, 새 세션이 시작되면 지난 세션을 요약해줍니다.
@@ -33,22 +33,33 @@ curl -fsSL https://raw.githubusercontent.com/taeng0204/ai-glass/main/install.sh 
 
 ## 기능
 
-| | |
-|---|---|
-| **플로팅 HUD** | 우상단 glass 알약 — 웨이브 스타일 5종(펄스 바/스무스 웨이브/워터필/오브/심전도), 6초 서비스 로테이션, 호버 시 에이전트별 5h·주간 게이지+리셋 카운트다운, 드래그 이동, ⌘⇧E 고정 확장 |
-| **대시보드** | 메뉴바 ✦ 클릭 또는 ⌘⇧U — 개요(윈도우별 게이지·소진 예측·오늘 토큰/비용/속도) · 추이(7/30일 스택 차트) · 프로젝트(디렉토리별, 에이전트 색 구분) · 기록(알림 히스토리, 호버 시 알약 리플레이) |
-| **이벤트** | 한도 70/90% 임박 · 세션 리셋(직전 세션 요약) · 토큰 급증 · 소진 예측(5h는 세션 내 소진 시, 주간은 "~N일" 추세) · 복귀 인사 |
-| **브리핑** | 아침(어제 요약+스트릭 🔥) · 점심(오늘 페이스 예측) · 저녁(오늘 요약) · 월요일 주간 리포트 📊 |
-| **재미** | 마일스톤 돌파 🎉 · 일일 신기록 🏆 · 사운드(옵션) — 통계도 중요하지만 감성도 중요하니까 |
-| **온보딩** | 첫 실행 시 웨이브 스타일·메뉴바 모드·에이전트를 라이브 프리뷰로 선택 |
+- **플로팅 HUD**: 우상단 glass 알약, 웨이브 스타일 5종, 6초 서비스 로테이션, 호버 시 에이전트별 5h·주간 게이지+리셋 카운트다운, 드래그 이동, ⌘⇧E 고정 확장
+- **대시보드**: 메뉴바 ✦ 클릭 또는 ⌘⇧U, 개요(윈도우별 게이지·소진 예측·오늘 토큰/비용/속도), 추이(7/30일 스택 차트), 프로젝트(디렉토리별, 에이전트 색 구분), 기록(알림 히스토리, 호버 시 알약 리플레이)
+- **이벤트**: 한도 70/90% 임박, 세션 리셋(직전 세션 요약), 토큰 급증, 소진 예측, 복귀 인사
+- **브리핑**: 아침(어제 요약+스트릭 🔥), 점심(오늘 페이스 예측), 저녁(오늘 요약), 월요일 주간 리포트 📊
+- **재미**: 마일스톤 돌파 🎉, 일일 신기록 🏆, 사운드 옵션
+- **온보딩**: 첫 실행 시 웨이브 스타일·메뉴바 모드·에이전트를 라이브 프리뷰로 선택
 
 ## 스크린샷
 
-| 대시보드 메인 | HUD 확장 |
-|---|---|
-| <img src="docs/images/dashboard-overview.png" width="360" alt="대시보드 메인 — 에이전트별 사용량, 한도 경고, 오늘 토큰, 비용, 속도"> | <img src="docs/images/hud-expanded.png" width="300" alt="HUD 확장 — 에이전트별 5h, 주간, 일일 사용량"> |
-| 추이 차트 | 한도 알림 |
-| <img src="docs/images/dashboard-trends.png" width="360" alt="추이 차트 — 최근 7일 에이전트별 토큰 사용량"> | <img src="docs/images/limit-alert.png" width="260" alt="한도 임박 알림 — Claude 소진 임박 경고"> |
+<table align="center">
+  <tr>
+    <th width="50%">대시보드 메인</th>
+    <th width="50%">HUD 확장</th>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/images/dashboard-overview.png" width="360" alt="대시보드 메인 — 에이전트별 사용량, 한도 경고, 오늘 토큰, 비용, 속도"></td>
+    <td align="center"><img src="docs/images/hud-expanded.png" width="300" alt="HUD 확장 — 에이전트별 5h, 주간, 일일 사용량"></td>
+  </tr>
+  <tr>
+    <th width="50%">추이 차트</th>
+    <th width="50%">한도 알림</th>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/images/dashboard-trends.png" width="360" alt="추이 차트 — 최근 7일 에이전트별 토큰 사용량"></td>
+    <td align="center"><img src="docs/images/limit-alert.png" width="260" alt="한도 임박 알림 — Claude 소진 임박 경고"></td>
+  </tr>
+</table>
 
 <p align="center">
   <img src="docs/images/onboarding-waves.png" width="480" alt="온보딩 — 웨이브 스타일 선택">
