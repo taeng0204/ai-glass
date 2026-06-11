@@ -251,7 +251,7 @@ private struct ServiceRow: View {
                 .foregroundStyle(.secondary)
                 .padding(.leading, 14)
         default:
-            Text("⚠️ 이 속도면 \(EventEngine.countdown(to: depletion.etaTo100, from: now)) 후 5h 한도 소진 (리셋 전)")
+            Text("⚠️ 이 속도면 \(EventEngine.countdown(to: depletion.etaTo100, from: now)) 후 5h 한도 소진")
                 .font(.system(size: 10))
                 .foregroundStyle(.orange)
                 .padding(.leading, 14)

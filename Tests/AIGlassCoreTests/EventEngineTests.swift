@@ -80,7 +80,7 @@ import Testing
         return
     }
     #expect(events[0].title.contains("소진 임박"))
-    #expect(events[0].subtitle.contains("5h 한도 소진 (리셋 전)"))
+    #expect(events[0].subtitle.contains("5h 한도 소진"))
     // 30분 쿨다운 내 재발화 없음
     #expect(engine.evaluate(limits: limits, burnRate: 0, baseline: 0, now: now.addingTimeInterval(60), depletions: dep).isEmpty)
     // 쿨다운 경과 후 재발화

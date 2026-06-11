@@ -8,6 +8,8 @@ public struct HUDEvent: Equatable {
         case burnSpike
         case briefing(BriefingEngine.Period)  // EventEngine과 무관 — HUDEvent 타입만 공유
         case comeback                         // 활동 공백 ≥3h 후 재시작
+        case milestone                        // 오늘 누적 토큰 명예 임계 통과
+        case record                           // 일일 토큰 신기록 경신
     }
     public let kind: Kind
     public let title: String
@@ -99,7 +101,7 @@ public final class EventEngine {
                     let days = Self.daysUntil(depletion.etaTo100, from: now)
                     subtitle = "이 추세면 약 \(days)일 후 주간 한도 소진"
                 default:
-                    subtitle = "이 속도면 \(Self.countdown(to: depletion.etaTo100, from: now)) 후 5h 한도 소진 (리셋 전)"
+                    subtitle = "이 속도면 \(Self.countdown(to: depletion.etaTo100, from: now)) 후 5h 한도 소진"
                 }
                 depletionEvents.append(HUDEvent(
                     kind: .depletionRisk(service),

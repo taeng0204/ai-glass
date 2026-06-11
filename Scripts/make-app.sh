@@ -35,6 +35,8 @@ cat > "${APP_DIR}/Contents/Info.plist" <<'PLIST'
     <string>AI Glass</string>
     <key>CFBundleExecutable</key>
     <string>AIGlass</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -54,6 +56,13 @@ PLIST
 echo "==> 바이너리 복사"
 cp "${BIN_PATH}" "${MACOS_DIR}/${APP_NAME}"
 chmod +x "${MACOS_DIR}/${APP_NAME}"
+
+echo "==> 앱 아이콘 복사"
+if [ -f "Assets/AppIcon.icns" ]; then
+    cp "Assets/AppIcon.icns" "${RES_DIR}/AppIcon.icns"
+else
+    echo "경고: Assets/AppIcon.icns 없음 — 아이콘 없이 진행" >&2
+fi
 
 echo "==> ad-hoc 코드사인"
 codesign --force --deep -s - "${APP_DIR}"
