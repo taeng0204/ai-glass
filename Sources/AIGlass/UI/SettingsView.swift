@@ -46,6 +46,32 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
 
+            Section("메뉴바") {
+                Picker("표시 모드", selection: $settings.menubarMode) {
+                    ForEach(MenubarMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                Text("6초마다 정보를 전환하는 모드도 있습니다")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("웨이브 스타일") {
+                Picker("스타일", selection: $settings.waveStyle) {
+                    ForEach(WaveStyle.allCases) { style in
+                        Text(style.label).tag(style)
+                    }
+                }
+            }
+
+            Section("재미") {
+                Toggle("마일스톤 (오늘 누적 돌파)", isOn: $settings.funMilestone)
+                Toggle("신기록 (역대 최대 갱신)", isOn: $settings.funRecord)
+                Toggle("스트릭 (연속 사용일)", isOn: $settings.funStreak)
+                Toggle("주간 리포트 (월요일 아침)", isOn: $settings.funWeeklyReport)
+                Toggle("알림 사운드", isOn: $settings.funSoundEnabled)
+            }
+
             Section("시스템") {
                 Toggle("로그인 시 시작", isOn: $settings.launchAtLogin)
                     .disabled(!LaunchAtLogin.isAvailable)

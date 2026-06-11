@@ -35,12 +35,15 @@ public final class BriefingEngine {
         public var lastWeekCost: Double?
         public var prevWeekTokens: Int?
         public var lastWeekTopProject: String?
+        /// 연속 사용일수 (오늘 포함, 끊김 없는 토큰>0). morning 부제에 N≥2일 때 " · {N}일 연속 🔥".
+        public var streakDays: Int
         public init(yesterdayTokens: Int = 0, yesterdayCost: Double = 0,
                     yesterdayTopProject: String? = nil,
                     todayTokens: Int = 0, todayCost: Double = 0,
                     todayTopService: (service: ServiceID, share: Double)? = nil,
                     lastWeekTokens: Int? = nil, lastWeekCost: Double? = nil,
-                    prevWeekTokens: Int? = nil, lastWeekTopProject: String? = nil) {
+                    prevWeekTokens: Int? = nil, lastWeekTopProject: String? = nil,
+                    streakDays: Int = 0) {
             self.yesterdayTokens = yesterdayTokens
             self.yesterdayCost = yesterdayCost
             self.yesterdayTopProject = yesterdayTopProject
@@ -51,6 +54,7 @@ public final class BriefingEngine {
             self.lastWeekCost = lastWeekCost
             self.prevWeekTokens = prevWeekTokens
             self.lastWeekTopProject = lastWeekTopProject
+            self.streakDays = streakDays
         }
     }
 
@@ -91,6 +95,9 @@ public final class BriefingEngine {
             var subtitle = "어제: \(Self.formatTokens(data.yesterdayTokens)) tokens · ~\(Self.formatCost(data.yesterdayCost))"
             if let project = data.yesterdayTopProject {
                 subtitle += " · 주로 \(project)"
+            }
+            if data.streakDays >= 2 {
+                subtitle += " · \(data.streakDays)일 연속 🔥"
             }
             return HUDEvent(kind: .briefing(.morning), title: "어제 사용 브리핑",
                             subtitle: subtitle, percent: nil)
