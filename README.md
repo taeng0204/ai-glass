@@ -1,82 +1,84 @@
-# AI Glass
+<p align="center">
+  <img src="docs/images/app-icon.png" width="128" alt="AI Glass icon">
+</p>
 
-Claude Code · Codex · Gemini 사용량을 liquid glass 플로팅 HUD와 메뉴바 대시보드로 보여주는 macOS 앱.
+<h1 align="center">AI Glass</h1>
 
-## 실행
+<p align="center">
+  Claude Code · Codex · Antigravity 사용량을 <b>liquid glass</b>로 보여주는 macOS 메뉴바 앱
+</p>
+
+<p align="center">
+  <a href="https://github.com/taeng0204/ai-glass/releases"><img src="https://img.shields.io/github/v/release/taeng0204/ai-glass?label=release" alt="release"></a>
+  <img src="https://img.shields.io/badge/macOS-26%2B-blue" alt="macOS 26+">
+  <img src="https://img.shields.io/badge/Swift-6-orange" alt="Swift 6">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"></a>
+</p>
+
+<p align="center">
+  <img src="docs/images/hud-pill.png" width="420" alt="플로팅 HUD 알약">
+</p>
+
+화면 우상단에 항상 떠 있는 **펄스 웨이브 알약**이 AI 코딩 에이전트들의 토큰 소모를 실시간으로 보여줍니다. 토큰이 빨리 탈수록 파도가 크게 출렁이고, 색 띠는 지금 어떤 에이전트가 일하는지 알려줍니다. 한도가 임박하면 알약이 카드로 모핑되며 경고하고, 새 세션이 시작되면 지난 세션을 요약해줍니다.
+
+## 설치 (원클릭)
 
 ```bash
-swift run AIGlass                 # 개발 실행 (메뉴바 + 플로팅 HUD)
-swift run AIGlass --check-claude  # Claude 한도 API 연결 진단
-swift test                        # 단위 테스트
+curl -fsSL https://raw.githubusercontent.com/taeng0204/ai-glass/main/install.sh | bash
 ```
 
-요구사항: macOS 26+, Claude Code / Codex / Gemini CLI 중 1개 이상 사용 이력.
+최신 릴리스를 받아 `/Applications`에 설치하고 바로 실행합니다. 또는 [Releases](https://github.com/taeng0204/ai-glass/releases)에서 zip을 직접 받아 `/Applications`에 넣어도 됩니다 (이 경우 최초 실행은 **우클릭 → 열기** — ad-hoc 서명 빌드라 Gatekeeper 확인이 한 번 필요합니다).
 
-### .app 번들로 설치
+> 요구사항: **macOS 26 (Tahoe) 이상** — 네이티브 liquid glass API를 사용합니다. Claude Code / Codex / Antigravity 중 1개 이상 사용 이력이 있으면 됩니다.
 
-알림센터 · 로그인 시 자동 시작은 **.app 번들에서만** 동작한다 (`swift run`은 번들이 아니므로 no-op).
+## 기능
+
+| | |
+|---|---|
+| **플로팅 HUD** | 우상단 glass 알약 — 웨이브 스타일 5종(펄스 바/스무스 웨이브/워터필/오브/심전도), 6초 서비스 로테이션, 호버 시 에이전트별 5h·주간 게이지+리셋 카운트다운, 드래그 이동, ⌘⇧E 고정 확장 |
+| **대시보드** | 메뉴바 ✦ 클릭 또는 ⌘⇧U — 개요(윈도우별 게이지·소진 예측·오늘 토큰/비용/속도) · 추이(7/30일 스택 차트) · 프로젝트(디렉토리별, 에이전트 색 구분) · 기록(알림 히스토리, 호버 시 알약 리플레이) |
+| **이벤트** | 한도 70/90% 임박 · 세션 리셋(직전 세션 요약) · 토큰 급증 · 소진 예측(5h는 세션 내 소진 시, 주간은 "~N일" 추세) · 복귀 인사 |
+| **브리핑** | 아침(어제 요약+스트릭 🔥) · 점심(오늘 페이스 예측) · 저녁(오늘 요약) · 월요일 주간 리포트 📊 |
+| **재미** | 마일스톤 돌파 🎉 · 일일 신기록 🏆 · 사운드(옵션) — 통계도 중요하지만 감성도 중요하니까 |
+| **온보딩** | 첫 실행 시 웨이브 스타일·메뉴바 모드·에이전트를 라이브 프리뷰로 선택 |
+
+<p align="center">
+  <img src="docs/images/dashboard-overview.png" width="340" alt="대시보드">
+  <img src="docs/images/projects-tab.png" width="340" alt="프로젝트 탭">
+</p>
+
+<p align="center">
+  <img src="docs/images/onboarding-waves.png" width="480" alt="온보딩 — 웨이브 스타일 선택">
+</p>
+
+## 데이터 소스 & 프라이버시
+
+모든 처리는 **로컬**에서 이루어집니다. 외부 네트워크 요청은 Claude 한도 조회용 Anthropic 사용량 API 호출 단 하나이며, 텔레메트리는 없습니다.
+
+- **Claude**: `~/.claude/projects/**/*.jsonl` (토큰·모델·프로젝트) + Keychain OAuth → 사용량 API (정확한 5h/주간 %) — 최초 1회 Keychain 다이얼로그에서 **"항상 허용"** 권장
+- **Codex**: `~/.codex/sessions/**/*.jsonl` (rate limit 스냅샷 + 토큰 + 프로젝트)
+- **Antigravity**: `~/.gemini/antigravity-cli/history.jsonl` (일일 요청 수 추정 — 토큰 정보는 로그에 없음)
+- 일별 통계는 `~/Library/Application Support/AIGlass/stats.db` (SQLite)에 저장
+
+비용 표시는 **API 단가 환산 추정치**입니다 — 구독 플랜 실비가 아닙니다.
+
+## 소스에서 빌드
 
 ```bash
-bash Scripts/make-app.sh          # release 빌드 → build/AIGlass.app 생성 (ad-hoc 코드사인)
-open build/AIGlass.app            # 실행
-cp -r build/AIGlass.app /Applications   # 설치 (선택)
+git clone https://github.com/taeng0204/ai-glass.git && cd ai-glass
+swift test                 # 단위 테스트 (136개)
+swift run AIGlass          # 개발 실행 (자동시작·알림은 .app 번들 전용)
+bash Scripts/make-app.sh   # .app 번들 생성 → build/AIGlass.app
+swift run AIGlass --check-claude   # Claude 한도 API 연결 진단
 ```
 
-## 설정
+> ad-hoc 서명이라 재빌드 시 Keychain 허용을 다시 묻습니다 (Apple Developer 인증서 없이는 피할 수 없는 macOS 정책).
 
-메뉴바 `✦` 우클릭 → **설정…** (또는 ⌘,):
+## 단축키
 
-- **경고/위험 임계값**: HUD·알림이 뜨는 사용률(%) 기준
-- **HUD 표시**: 플로팅 알약 표시/숨김 (즉시 반영)
-- **HUD 표시 정보**: 알약에 띄울 항목 토글 — 사용률 %, 리셋 카운트다운 (웨이브는 항상 표시)
-- **메뉴바**: 표시 모드 선택 (고정 표시, 자동 로테이션 없음) — `오늘 누적 토큰`(기본)/`소모 속도 (t/min)`/`최고 사용률 %`/`아이콘만`(위험도 색)
-- **웨이브 스타일**: 알약 웨이브 모양 5종 — `펄스 바`(기본)/`스무스 웨이브`(연속 사인 곡선)/`워터필`(흐르는 사인 파면 2겹 수위)/`오브 글로우`(숨쉬는 그라데이션 구슬)/`하트비트`(심전도 라인)
-- **재미**: 마일스톤(오늘 누적 돌파)/신기록(역대 최대 갱신)/스트릭(연속 사용일)/주간 리포트(월요일 아침)/알림 사운드 토글. 사운드만 기본 꺼짐.
-- **알림 보내기**: 이벤트 발생 시 알림센터 알림 (.app 전용)
-- **로그인 시 시작**: 자동 시작 (.app 전용 — `swift run`에서는 비활성)
-- **Gemini 일일 쿼터**: 요청 수 추정 기준 (재시작 후 적용)
-- **표시할 에이전트**: 알약 로테이션·웨이브·호버 카드·대시보드·메뉴바·알림에 반영할 에이전트 선택 (최소 1개 유지). 끈 에이전트는 모든 표시·알림에서 제외된다.
+- **⌘⇧U** — 대시보드 열기/닫기
+- **⌘⇧E** — 알약 확장 고정/해제
 
-전역 단축키:
-- **⌘⇧U** — 어디서든 대시보드 팝오버 토글
-- **⌘⇧E** — HUD 호버 카드 고정 (다시 누르면 해제)
+## 라이선스
 
-## 동작
-
-- **플로팅 HUD**: 화면 우상단 liquid glass 알약. 실시간 토큰 소모 속도가 웨이브(설정에서 5종 중 선택 — 펄스 바/스무스 웨이브/워터필/오브 글로우/하트비트)로 표현되고(서비스 색 그라데이션), 이벤트(한도 임계값 도달·소진 임박·윈도우 리셋·토큰 급증·마일스톤·신기록) 시 카드로 모핑됐다가 6초 후 수축. 알약 %는 6초마다 서비스를 로테이션하며 그 서비스의 5h 윈도우 기준으로 표시하고, %·점 오른쪽에 그 윈도우의 리셋 카운트다운(작은 회색, 정확값 없으면 `~` 근사)을 함께 띄운다(설정에서 % / 카운트다운 각각 끌 수 있음). 호버하면 서비스별 사용률 + 리셋 카운트다운 카드(⌘⇧E로 고정 가능). 클릭하면 톡 눌리며 대시보드 열림. 한도(위험 임계값) 도달 시 알약에 빨강 글로우가 호흡한다. 드래그로 이동(위치 기억).
-- **브리핑**: 하루 3회 시간대별 HUD 확장 카드 — 아침(8–11시) "어제 사용 브리핑", 점심(12–14시) "오늘 페이스"(현재 속도로 자정까지 외삽), 저녁(18–22시) "오늘 사용 요약"(주력 서비스 비중 포함). 각 시간대 하루 1회만 발화하며(상태는 영구 저장), 알림 설정이 켜져 있으면 알림센터로도 전달. 아침 브리핑 부제 끝에 연속 사용일이 2일 이상이면 ` · N일 연속 🔥`을 붙이고, 월요일 아침이면 "주간 리포트 📊" 특별판(지난주 토큰·비용·주 프로젝트·전주 대비 증감)으로 대체된다.
-- **재미**: 오늘 누적 토큰이 명예 임계(100M/250M/.../5B)를 넘으면 "오늘 N 돌파! 🎉"(마일스톤), 역대 최대 일일 토큰을 갱신하면 "오늘 신기록! 🏆"(하루 1회, 부제 종전 기록). 설정에서 각각 끄거나 켤 수 있고, `알림 사운드`를 켜면 알림성 이벤트(한도·소진·마일스톤·신기록)에 시스템 사운드가 함께 울린다.
-- **메뉴바**: 표시 모드 4종(설정에서 선택, 고정 표시 — 자동 로테이션 없음) — 기본 `✦ 612M`(오늘 누적 토큰), `✦ 38K/m`(소모 속도), `✦ N%`(최고 사용률), `✦`(아이콘만, 위험도 색). 갱신은 데이터 refresh에 편승하며 값이 같으면 다시 그리지 않는다(깜빡임 방지). 좌클릭 → 메뉴바 직하 glass 대시보드 패널 (개요/추이/프로젝트/기록). 우클릭 → 대시보드·설정·HUD 표시·종료 메뉴.
-- **컴백 인사**: 3시간 이상 AI 활동이 끊겼다가 다시 시작하면 "다시 달려볼까요!" HUD 카드로 공백 시간(`Xh Ym`)을 알린다. (앱 시작 직후 과거 로그 일괄 적재로는 발화하지 않음.)
-- **카운트다운 포맷**: 리셋까지 24시간 이상이면 `1d 2h 3m`처럼 일(day) 단위로, 미만이면 `Xh Ym`/`Ym`으로 표기.
-- **기록 탭**: 최근 30건의 HUD 알림(한도·소진·리셋·급증·컴백·브리핑)을 최신순으로. 행에 호버하면 알약이 그 알림 모양으로 잠깐 모핑된다.
-- **공식 컬러**: 서비스 식별색은 각 브랜드 공식 컬러를 따른다 — Claude 테라코타(#D97757), Codex/ChatGPT 그린(#10A37F), Gemini 구글 블루(#4285F4). 웨이브·점·프로젝트 스택 바에 공통 적용.
-- **소진 예측**: 사용률 시계열의 추세로 "이 속도면 N분 후 소진 (리셋 전)"을 추정해 개요 탭과 알림에 표시.
-- **세션 리포트**: 윈도우 리셋 시 직전 세션 요약(토큰·주 프로젝트·추정 비용)을 카드/알림에 표시.
-- **30일 추이**: 추이 탭의 7일/30일 토글. 30일은 SQLite(`~/Library/Application Support/AIGlass/stats.db`)에 영구 저장된 통계 기반.
-- **갱신**: FSEvents로 로그 변경 즉시 + 30초 폴백 타이머. Claude 한도는 60초마다 API 폴링.
-
-## 데이터 소스
-
-- Claude: `~/.claude/projects/**/*.jsonl` + Keychain OAuth → 사용량 API (5h/주간 %, 최초 1회 Keychain 허용 필요 — 아래 참고)
-- Codex: `~/.codex/sessions/**/*.jsonl` (rate limit 스냅샷 포함)
-- Gemini: `~/.gemini/tmp/**/logs.json` (일일 요청 수 기반 추정, 토큰 데이터 없음)
-
-모든 처리는 로컬. 외부 전송은 Anthropic 사용량 API 호출뿐. 텔레메트리 없음.
-
-### Keychain 접근 ("항상 허용")
-
-Claude 한도 폴링(60초)은 Keychain의 `Claude Code-credentials` 항목을 읽는다. 토큰은 메모리에 캐시되어 만료 전까지 재조회하지 않으므로 다이얼로그가 반복해서 뜨지 않지만, 최초 접근 시 macOS가 허용 다이얼로그를 띄운다. 이때 **"항상 허용(Always Allow)"** 을 선택하면 이후 같은 빌드에서는 다이얼로그가 뜨지 않는다.
-
-**한계**: `Scripts/make-app.sh`는 **ad-hoc 서명**(안정적인 서명 ID 없음)을 사용한다. Keychain ACL은 서명 기준으로 앱을 식별하므로, **재빌드해서 새 `.app`을 만들면 macOS가 다른 앱으로 보고 "항상 허용"이 무효화되어 다이얼로그가 다시 뜬다.** 안정적인 개발자 인증서로 서명하면 재빌드 후에도 허용이 유지된다.
-
-## 비용 추정 면책
-
-표시되는 비용($)은 **API 단가 환산 추정치**일 뿐이며 **구독(정액) 실비가 아니다**. Claude Pro/Max, ChatGPT Plus 등 정액 구독 사용자의 실제 청구액과 무관하며, "이만큼을 API로 썼다면 얼마"라는 참고용 환산값이다. 단가는 공개 API 가격 기준 추정이고 시점에 따라 부정확할 수 있다.
-
-## 알려진 제약 (MVP)
-
-- 첫 실행 시 최근 8일 로그를 동기 파싱 — 로그가 많으면 시작에 수 초 소요
-- Gemini는 토큰 수를 알 수 없어 요청 수 기반 추정치만 표시
-- HUD 헤드라인 %는 세 서비스 윈도우의 최댓값이며 Gemini 추정치도 포함됨
-- 비용($)은 API 환산 추정치 — 위 면책 참고
+[MIT](LICENSE) © 2026 taeng0204
