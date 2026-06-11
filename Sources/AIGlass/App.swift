@@ -45,7 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let store = UsageStore()
     let settings = AppSettings()
     var statusItem: NSStatusItem?
-    var popover: NSPopover?
+    var dashboardPanel: DashboardPanelController?
     let hudState = HUDState()
     let eventEngine = EventEngine()
     var hudController: HUDPanelController?
@@ -78,10 +78,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         statusItem = item
 
-        let pop = NSPopover()
-        pop.behavior = .transient
-        pop.contentViewController = NSHostingController(rootView: DashboardView(store: store, statsStore: statsStore))
-        popover = pop
+        dashboardPanel = DashboardPanelController(
+            store: store,
+            statsStore: statsStore,
+            onRefresh: { [weak self] in self?.refresh() },
+            onClose: {})
 
         hudController = HUDPanelController(store: store, state: hudState, settings: settings) { [weak self] in
             self?.togglePopover()
@@ -245,12 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func togglePopover() {
-        guard let button = statusItem?.button, let popover else { return }
-        if popover.isShown {
-            popover.performClose(nil)
-        } else {
-            refresh()
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        }
+        guard let button = statusItem?.button else { return }
+        dashboardPanel?.toggle(relativeTo: button)
     }
 }

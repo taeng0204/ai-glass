@@ -194,8 +194,8 @@ private struct TrendsTab: View {
 private struct ProjectsTab: View {
     let store: UsageStore
     var body: some View {
-        let projects = store.projectBreakdown(days: 7, now: Date())
-        let total = max(1, projects.reduce(0) { $0 + $1.tokens })
+        let projects = store.projectServiceBreakdown(days: 7, now: Date())
+        let grandTotal = max(1, projects.reduce(0) { $0 + $1.total })
         VStack(spacing: 8) {
             if projects.isEmpty {
                 Text("최근 7일 데이터 없음").font(.caption).foregroundStyle(.secondary)
@@ -206,14 +206,14 @@ private struct ProjectsTab: View {
                     HStack {
                         Text(item.project).font(.system(size: 11, weight: .medium)).lineLimit(1)
                         Spacer()
-                        Text(formatTokens(item.tokens))
+                        Text(formatTokens(item.total))
                             .font(.system(size: 11).monospacedDigit())
                             .foregroundStyle(.secondary)
-                        Text("\(Int(Double(item.tokens) / Double(total) * 100))%")
+                        Text("\(Int(Double(item.total) / Double(grandTotal) * 100))%")
                             .font(.system(size: 11).monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
-                    GaugeBar(percent: Double(item.tokens) / Double(total) * 100, tint: .purple)
+                    StackBar(byService: item.byService, total: item.total)
                 }
             }
             if !projects.isEmpty {
@@ -229,5 +229,27 @@ private struct ProjectsTab: View {
         case 1_000...: return String(format: "%.0fK", Double(n) / 1_000)
         default: return "\(n)"
         }
+    }
+}
+
+/// 프로젝트 행의 서비스별 색 비례 세그먼트 스택 (높이 6, Capsule 클립).
+private struct StackBar: View {
+    let byService: [ServiceID: Int]
+    let total: Int
+    var body: some View {
+        GeometryReader { geo in
+            let denom = Double(max(1, total))
+            HStack(spacing: 0) {
+                ForEach(ServiceID.allCases) { service in
+                    let tokens = byService[service] ?? 0
+                    if tokens > 0 {
+                        Theme.color(for: service)
+                            .frame(width: geo.size.width * Double(tokens) / denom)
+                    }
+                }
+            }
+        }
+        .frame(height: 6)
+        .clipShape(Capsule())
     }
 }

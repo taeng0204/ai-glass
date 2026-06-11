@@ -9,11 +9,11 @@ final class HUDState {
     private var dismissTask: Task<Void, Never>?
     private var hoverTask: Task<Void, Never>?
 
-    func show(_ event: HUDEvent) {
+    func show(_ event: HUDEvent, duration: TimeInterval = 6) {
         dismissTask?.cancel()
         withAnimation(.spring(duration: 0.55, bounce: 0.25)) { currentEvent = event }
         dismissTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(6))
+            try? await Task.sleep(for: .seconds(duration))
             guard !Task.isCancelled else { return }
             withAnimation(.spring(duration: 0.45)) { self?.currentEvent = nil }
         }
@@ -109,21 +109,23 @@ struct HUDView: View {
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: cornerRadius))
         .onHover { state.setHover($0) }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-        .padding(.top, 2)
-        .padding(.trailing, 6)
-        .padding(.bottom, 4)
-        .padding(.leading, 4)
+        .padding(10)
     }
 }
 
 struct WavePill: View {
     let store: UsageStore
 
-    /// 최고 사용률 서비스
-    private var topService: ServiceID? {
-        store.limits.max {
-            ($0.value.map(\.usedPercent).max() ?? 0) < ($1.value.map(\.usedPercent).max() ?? 0)
-        }?.key
+    /// limits가 있는 서비스 — claude, codex, gemini 고정 순.
+    private var rotationServices: [ServiceID] {
+        ServiceID.allCases.filter { !(store.limits[$0]?.isEmpty ?? true) }
+    }
+
+    /// 서비스의 표시 %: session5h 윈도우 우선, 없으면 최댓값 윈도우.
+    private func displayPercent(_ service: ServiceID) -> Double {
+        guard let windows = store.limits[service], !windows.isEmpty else { return 0 }
+        if let s5h = windows.first(where: { $0.kind == .session5h }) { return s5h.usedPercent }
+        return windows.map(\.usedPercent).max() ?? 0
     }
 
     var body: some View {
@@ -131,28 +133,27 @@ struct WavePill: View {
             let t = context.date.timeIntervalSinceReferenceDate
             let level = store.activityLevel(now: context.date) // 0...1
             let amplitude = 0.15 + 0.85 * level               // idle에도 잔물결
-            let bars = allocateBars(share: store.recentShare(now: context.date), barCount: 7)
-            let top = topService
+            let share = store.recentShare(now: context.date)
+            let services = rotationServices
+            // 6초마다 로테이션 (limits 서비스 순환)
+            let index = services.isEmpty ? 0 : Int(t / 6) % services.count
+            let current: ServiceID? = services.isEmpty ? nil : services[index]
+            let percent = current.map(displayPercent) ?? store.maxUsedPercent
+
             HStack(spacing: 8) {
-                HStack(spacing: 2.5) {
-                    ForEach(0..<7, id: \.self) { i in
-                        let phase = t * (2.2 + Double(i) * 0.13) + Double(i) * 0.9
-                        let h = 4 + 12 * amplitude * (0.5 + 0.5 * sin(phase))
-                        Capsule()
-                            .fill(barGradient(bars[i]))
-                            .frame(width: 3, height: h)
-                    }
-                }
-                .frame(height: 16)
+                waveBars(t: t, amplitude: amplitude, share: share)
+                    .frame(height: 16)
                 HStack(spacing: 4) {
-                    if let top {
+                    if let current {
                         Circle()
-                            .fill(Theme.color(for: top))
+                            .fill(Theme.color(for: current))
                             .frame(width: 6, height: 6)
+                            .animation(.easeInOut(duration: 0.45), value: index)
                     }
-                    Text("\(Int(store.maxUsedPercent))%")
+                    Text("\(Int(percent))%")
                         .font(.system(size: 11, weight: .bold).monospacedDigit())
-                        .foregroundStyle(Theme.statusColor(percent: store.maxUsedPercent))
+                        .foregroundStyle(Theme.statusColor(percent: percent))
+                        .animation(.easeInOut(duration: 0.45), value: index)
                 }
             }
             .padding(.horizontal, 13)
@@ -160,14 +161,47 @@ struct WavePill: View {
         }
     }
 
-    private func barGradient(_ service: ServiceID?) -> LinearGradient {
-        if let service {
-            let c = Theme.color(for: service)
-            return LinearGradient(colors: [c.opacity(0.9), c.opacity(0.6)],
-                                  startPoint: .top, endPoint: .bottom)
+    /// 7개 바(높이 애니메이션) HStack을 mask로, share 누적 가로 그라데이션을 fill.
+    private func waveBars(t: Double, amplitude: Double, share: [ServiceID: Double]) -> some View {
+        let mask = HStack(spacing: 2.5) {
+            ForEach(0..<7, id: \.self) { i in
+                let phase = t * (2.2 + Double(i) * 0.13) + Double(i) * 0.9
+                let h = 4 + 12 * amplitude * (0.5 + 0.5 * sin(phase))
+                Capsule().frame(width: 3, height: h)
+            }
         }
-        return LinearGradient(colors: [.purple.opacity(0.9), .blue.opacity(0.7)],
-                              startPoint: .top, endPoint: .bottom)
+        .frame(height: 16)
+        return Rectangle()
+            .fill(waveGradient(share: share))
+            .mask(mask)
+    }
+
+    /// share 비례 누적 위치에 서비스 색을 배치한 가로 그라데이션.
+    /// 경계마다 ±0.08 오프셋 stop을 두어 부드럽게 블렌딩. 활동 없으면 보라-파랑.
+    private func waveGradient(share: [ServiceID: Double]) -> LinearGradient {
+        let active = ServiceID.allCases.compactMap { svc -> (ServiceID, Double)? in
+            guard let s = share[svc], s > 0 else { return nil }
+            return (svc, s)
+        }
+        guard !active.isEmpty else {
+            return LinearGradient(colors: [.purple.opacity(0.9), .blue.opacity(0.7)],
+                                  startPoint: .leading, endPoint: .trailing)
+        }
+        var stops: [Gradient.Stop] = []
+        var cursor = 0.0
+        for (i, entry) in active.enumerated() {
+            let (svc, frac) = entry
+            let c = Theme.color(for: svc)
+            let start = cursor
+            let end = cursor + frac
+            // 경계 블렌딩: 시작은 +0.08 이전부터(첫 세그먼트 제외), 끝은 -0.08 이후까지.
+            let blendStart = i == 0 ? start : max(start, start - 0.08)
+            let blendEnd = i == active.count - 1 ? 1.0 : min(1.0, end - 0.08)
+            stops.append(.init(color: c, location: blendStart))
+            stops.append(.init(color: c, location: max(blendStart, blendEnd)))
+            cursor = end
+        }
+        return LinearGradient(stops: stops, startPoint: .leading, endPoint: .trailing)
     }
 }
 
@@ -192,23 +226,40 @@ struct HoverCard: View {
         return windows.map(\.usedPercent).max()
     }
 
+    /// session5h 윈도우(없으면 최댓값 윈도우)의 resetsAt. nil이면 카운트다운 생략.
+    private func resetCountdown(_ service: ServiceID) -> String? {
+        guard let windows = store.limits[service], !windows.isEmpty else { return nil }
+        let window = windows.first(where: { $0.kind == .session5h })
+            ?? windows.max(by: { $0.usedPercent < $1.usedPercent })
+        guard let resetsAt = window?.resetsAt else { return nil }
+        return EventEngine.countdown(to: resetsAt, from: Date())
+    }
+
     @ViewBuilder
     private func row(for service: ServiceID) -> some View {
         let percent = maxPercent(service)
-        HStack(spacing: 8) {
-            Circle()
-                .fill(Theme.color(for: service))
-                .frame(width: 6, height: 6)
-            Text(service.displayName)
-                .font(.system(size: 10.5, weight: .semibold))
-            Spacer(minLength: 4)
-            GaugeBar(percent: percent ?? 0,
-                     tint: percent.map { Theme.statusColor(percent: $0) } ?? .gray)
-                .frame(width: 64)
-            Text(percent.map { "\(Int($0))%" } ?? "–")
-                .font(.system(size: 10.5, weight: .bold).monospacedDigit())
-                .foregroundStyle(percent.map { Theme.statusColor(percent: $0) } ?? .secondary)
-                .frame(width: 34, alignment: .trailing)
+        let countdown = resetCountdown(service)
+        VStack(alignment: .trailing, spacing: 1) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(Theme.color(for: service))
+                    .frame(width: 6, height: 6)
+                Text(service.displayName)
+                    .font(.system(size: 10.5, weight: .semibold))
+                Spacer(minLength: 4)
+                GaugeBar(percent: percent ?? 0,
+                         tint: percent.map { Theme.statusColor(percent: $0) } ?? .gray)
+                    .frame(width: 64)
+                Text(percent.map { "\(Int($0))%" } ?? "–")
+                    .font(.system(size: 10.5, weight: .bold).monospacedDigit())
+                    .foregroundStyle(percent.map { Theme.statusColor(percent: $0) } ?? .secondary)
+                    .frame(width: 34, alignment: .trailing)
+            }
+            if let countdown {
+                Text("리셋 \(countdown)")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }
@@ -239,7 +290,12 @@ struct EventCard: View {
         case .depletionRisk: return "hourglass.bottomhalf.filled"
         case .windowReset: return "sparkles"
         case .burnSpike: return "flame.fill"
-        case .briefing: return "sparkles"  // W2에서 Period별 스타일링
+        case .briefing(let period):
+            switch period {
+            case .morning: return "sun.max.fill"
+            case .lunch: return "gauge.with.needle"
+            case .evening: return "moon.stars.fill"
+            }
         }
     }
     private var iconColor: Color {
@@ -248,7 +304,12 @@ struct EventCard: View {
         case .depletionRisk: return .orange
         case .windowReset: return .green
         case .burnSpike: return .pink
-        case .briefing: return .yellow  // W2에서 Period별 스타일링
+        case .briefing(let period):
+            switch period {
+            case .morning: return .yellow
+            case .lunch: return .blue
+            case .evening: return .indigo
+            }
         }
     }
 }
