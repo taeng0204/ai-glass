@@ -99,6 +99,7 @@ extension HUDEvent.Kind {
         case .depletionRisk: return "hourglass.bottomhalf.filled"
         case .windowReset: return "sparkles"
         case .burnSpike: return "flame.fill"
+        case .comeback: return "figure.wave"
         case .briefing(let period):
             switch period {
             case .morning: return "sun.max.fill"
@@ -113,6 +114,7 @@ extension HUDEvent.Kind {
         case .depletionRisk: return .orange
         case .windowReset: return .green
         case .burnSpike: return .pink
+        case .comeback: return .cyan
         case .briefing(let period):
             switch period {
             case .morning: return .yellow

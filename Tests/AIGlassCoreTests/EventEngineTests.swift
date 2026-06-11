@@ -117,3 +117,39 @@ import Testing
     guard case .windowReset(.claude) = events[0].kind else { Issue.record("reset"); return }
     #expect(events[0].subtitle == "지난 세션: 1.0M tokens (claude)")
 }
+
+// MARK: - countdown d-포맷
+
+@MainActor @Test func countdownUnder24hReturnsHhMm() {
+    let now = Date(timeIntervalSinceReferenceDate: 0)
+    // 2h 14m
+    let target = now.addingTimeInterval(2 * 3600 + 14 * 60)
+    #expect(EventEngine.countdown(to: target, from: now) == "2h 14m")
+}
+
+@MainActor @Test func countdownUnder1hReturnsMmOnly() {
+    let now = Date(timeIntervalSinceReferenceDate: 0)
+    let target = now.addingTimeInterval(45 * 60)
+    #expect(EventEngine.countdown(to: target, from: now) == "45m")
+}
+
+@MainActor @Test func countdownExact24hReturnsDFormat() {
+    let now = Date(timeIntervalSinceReferenceDate: 0)
+    // 정확히 24h → 1d 0h 0m
+    let target = now.addingTimeInterval(24 * 3600)
+    #expect(EventEngine.countdown(to: target, from: now) == "1d 0h 0m")
+}
+
+@MainActor @Test func countdown25hReturnsDFormat() {
+    let now = Date(timeIntervalSinceReferenceDate: 0)
+    // 25h = 1d 1h 0m
+    let target = now.addingTimeInterval(25 * 3600)
+    #expect(EventEngine.countdown(to: target, from: now) == "1d 1h 0m")
+}
+
+@MainActor @Test func countdownPreservesMinutesInDFormat() {
+    let now = Date(timeIntervalSinceReferenceDate: 0)
+    // 25h 30m = 1d 1h 30m
+    let target = now.addingTimeInterval(25 * 3600 + 30 * 60)
+    #expect(EventEngine.countdown(to: target, from: now) == "1d 1h 30m")
+}

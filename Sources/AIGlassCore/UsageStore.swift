@@ -19,6 +19,13 @@ public final class UsageStore {
     /// 이벤트 보존 기간 (일). 이보다 오래된 이벤트는 ingest 시 무시.
     public static let retentionDays = 8
 
+    /// 첫 addEvents(초기 로드) 완료 여부. true가 되기 전에는 컴백 공백을 기록하지 않는다.
+    private var hasLoadedInitialBatch = false
+    /// 지금까지 addEvents로 추가된 이벤트 중 최대 timestamp.
+    private var lastKnownMaxTimestamp: Date?
+    /// 다음 consumeComebackGap() 호출 시 반환할 공백(초). nil이면 미감지.
+    private var pendingComebackGap: TimeInterval?
+
     public init() {}
 
     public func setLimits(_ windows: [LimitWindow], for service: ServiceID) {
@@ -71,8 +78,33 @@ public final class UsageStore {
                 for svc in minuteBuckets.keys {
                     minuteBuckets[svc] = minuteBuckets[svc]!.filter { $0.key > cutoffMinute }
                 }
+
+                // 컴백 감지: 직전 최신 timestamp와 이번 배치 최소 timestamp 비교
+                let batchMin = batch.compactMap { cutoff <= $0.event.timestamp ? $0.event.timestamp : nil }.min()
+                if let prevMax = lastKnownMaxTimestamp, let batchMin {
+                    let gap = batchMin.timeIntervalSince(prevMax)
+                    if !hasLoadedInitialBatch {
+                        // 첫 로드 완료 — 공백 기록 없이 플래그만 세움
+                        hasLoadedInitialBatch = true
+                    } else if gap >= 3 * 3600 {
+                        pendingComebackGap = gap
+                    }
+                } else if !hasLoadedInitialBatch {
+                    hasLoadedInitialBatch = true
+                }
+
+                // 최신 타임스탬프 갱신
+                if lastKnownMaxTimestamp == nil || newest > lastKnownMaxTimestamp! {
+                    lastKnownMaxTimestamp = newest
+                }
             }
         }
+    }
+
+    /// 감지된 컴백 공백을 반환하고 클리어한다. 없으면 nil.
+    public func consumeComebackGap() -> TimeInterval? {
+        defer { pendingComebackGap = nil }
+        return pendingComebackGap
     }
 
     public func setGeminiRequests(_ dates: [Date]) {

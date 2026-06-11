@@ -7,6 +7,7 @@ public struct HUDEvent: Equatable {
         case windowReset(ServiceID)
         case burnSpike
         case briefing(BriefingEngine.Period)  // EventEngine과 무관 — HUDEvent 타입만 공유
+        case comeback                         // 활동 공백 ≥3h 후 재시작
     }
     public let kind: Kind
     public let title: String
@@ -110,8 +111,13 @@ public final class EventEngine {
 
     public static func countdown(to date: Date, from now: Date) -> String {
         let seconds = max(0, Int(date.timeIntervalSince(now)))
-        let hours = seconds / 3600
+        let totalHours = seconds / 3600
         let minutes = (seconds % 3600) / 60
-        return hours > 0 ? "\(hours)h \(minutes)m" : "\(minutes)m"
+        if totalHours >= 24 {
+            let days = totalHours / 24
+            let hours = totalHours % 24
+            return "\(days)d \(hours)h \(minutes)m"
+        }
+        return totalHours > 0 ? "\(totalHours)h \(minutes)m" : "\(minutes)m"
     }
 }
