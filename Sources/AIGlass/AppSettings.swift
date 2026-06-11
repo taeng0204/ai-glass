@@ -18,6 +18,8 @@ final class AppSettings {
         static let launchAtLogin = "aiglass.launchAtLogin"
         static let hudFrame = "aiglass.hudFrame"
         static let enabledServices = "aiglass.enabledServices"
+        static let hudShowsPercent = "aiglass.hudShowsPercent"
+        static let hudShowsCountdown = "aiglass.hudShowsCountdown"
     }
 
     var warnThreshold: Double {
@@ -47,6 +49,14 @@ final class AppSettings {
     var enabledServices: Set<ServiceID> {
         didSet { defaults.set(enabledServices.map(\.rawValue).sorted(), forKey: Key.enabledServices) }
     }
+    /// HUD 알약에 사용률 %를 표시할지. 끄면 점+웨이브(+카운트다운)만.
+    var hudShowsPercent: Bool {
+        didSet { defaults.set(hudShowsPercent, forKey: Key.hudShowsPercent) }
+    }
+    /// HUD 알약에 리셋 카운트다운(작은 회색)을 표시할지.
+    var hudShowsCountdown: Bool {
+        didSet { defaults.set(hudShowsCountdown, forKey: Key.hudShowsCountdown) }
+    }
 
     init() {
         warnThreshold = defaults.object(forKey: Key.warnThreshold) as? Double ?? 70
@@ -56,6 +66,8 @@ final class AppSettings {
         geminiDailyQuota = defaults.object(forKey: Key.geminiDailyQuota) as? Int ?? 1000
         launchAtLogin = defaults.object(forKey: Key.launchAtLogin) as? Bool ?? false
         hudFrame = defaults.string(forKey: Key.hudFrame)
+        hudShowsPercent = defaults.object(forKey: Key.hudShowsPercent) as? Bool ?? true
+        hudShowsCountdown = defaults.object(forKey: Key.hudShowsCountdown) as? Bool ?? true
         let raw = defaults.stringArray(forKey: Key.enabledServices) ?? []
         let parsed = Set(raw.compactMap(ServiceID.init(rawValue:)))
         enabledServices = parsed.isEmpty ? Set(ServiceID.allCases) : parsed

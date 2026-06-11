@@ -201,9 +201,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         codexCollector.collect(into: store)
         geminiCollector.collect(into: store)
         updateStatusTitle()
+        evaluateComebackIfDue()
         evaluateEvents()
         persistStatsIfDue()
         evaluateBriefingIfDue()
+    }
+
+    /// 활동 공백(≥3h) 후 재개를 감지하면 컴백 인사 HUD를 띄운다 (기록에도 남음).
+    private func evaluateComebackIfDue() {
+        guard let gap = store.consumeComebackGap() else { return }
+        let now = Date()
+        let formatted = EventEngine.countdown(to: now.addingTimeInterval(gap), from: now)
+        showHUD(HUDEvent(kind: .comeback,
+                         title: "다시 달려볼까요!",
+                         subtitle: "\(formatted) 만에 AI 작업 재개",
+                         percent: nil))
     }
 
     /// 60초 디바운스로 최근 8일 이벤트 전체를 SQLite에 upsert (REPLACE 멱등).

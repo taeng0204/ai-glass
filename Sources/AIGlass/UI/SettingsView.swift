@@ -39,6 +39,13 @@ struct SettingsView: View {
                 Toggle("알림 보내기", isOn: $settings.notificationsEnabled)
             }
 
+            Section("HUD 표시 정보") {
+                Toggle("사용률 %", isOn: $settings.hudShowsPercent)
+                Toggle("리셋 카운트다운", isOn: $settings.hudShowsCountdown)
+                Text("알약에 표시할 항목을 고릅니다 (웨이브는 항상 표시)")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
             Section("시스템") {
                 Toggle("로그인 시 시작", isOn: $settings.launchAtLogin)
                     .disabled(!LaunchAtLogin.isAvailable)
