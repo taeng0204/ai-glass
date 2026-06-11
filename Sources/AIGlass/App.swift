@@ -112,6 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             home + "/.claude/projects",
             home + "/.codex/sessions",
             home + "/.gemini/tmp",
+            home + "/.gemini/antigravity-cli",
         ]) { [weak self] in
             MainActor.assumeIsolated { self?.refresh() }
         }

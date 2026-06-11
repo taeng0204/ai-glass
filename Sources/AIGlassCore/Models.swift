@@ -7,7 +7,7 @@ public enum ServiceID: String, CaseIterable, Codable, Sendable, Identifiable {
         switch self {
         case .claude: return "Claude"
         case .codex: return "Codex"
-        case .gemini: return "Gemini"
+        case .gemini: return "Antigravity"
         }
     }
 }
