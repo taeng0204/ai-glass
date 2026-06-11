@@ -123,14 +123,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }
-        // 메뉴바 6초 로테이션 (collect 없이 title-only 갱신, store 캐시만 읽음).
-        Timer.scheduledTimer(withTimeInterval: 6, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self else { return }
-                self.menubarTick += 1
-                self.updateStatusTitle()
-            }
-        }
 
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         watcher = DirectoryWatcher(paths: [
@@ -149,83 +141,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    /// 메뉴바 6초 로테이션 토글 (todayAndBurn/serviceRotation에서 사용).
-    private var menubarTick = 0
+    /// 마지막으로 set한 메뉴바 상태 키 — 동일 값 재설정 생략 (깜빡임 방지).
+    private var lastMenubarKey: String?
 
-    /// 메뉴바 타이틀을 현재 모드/캐시값으로 갱신한다. collect 호출 금지 — store 캐시만 읽음.
+    /// 메뉴바 타이틀을 현재 모드/캐시값으로 갱신한다. 자동 로테이션 없음 — refresh에 편승.
+    /// collect 호출 금지(store 캐시만 읽음), 이전 값과 동일하면 set 생략.
     func updateStatusTitle() {
         guard let button = statusItem?.button else { return }
         let now = Date()
         switch settings.menubarMode {
+        case .todayTokens:
+            let tokens = store.todayTokens(now: now)
+            setPlainTitle(tokens > 0 ? "✦ \(Self.formatTokens(tokens))" : "✦ –", on: button)
+
+        case .burnRate:
+            let burn = store.tokensPerMinute(windowMinutes: 5, now: now)
+            setPlainTitle(burn > 0 ? "✦ \(Self.formatRate(burn))" : "✦ –", on: button)
+
         case .maxPercent:
             let percent = store.maxUsedPercent(in: settings.enabledServices)
-            button.attributedTitle = NSAttributedString(string: "")
-            button.title = percent > 0 ? "✦ \(Int(percent))%" : "✦ –"
+            setPlainTitle(percent > 0 ? "✦ \(Int(percent))%" : "✦ –", on: button)
 
-        case .minimalDot:
-            // "✦"만 + 위험도 색.
+        case .iconOnly:
+            // "✦"만 + 위험도 색. 색 단계가 같으면 set 생략.
             let percent = store.maxUsedPercent(in: settings.enabledServices)
-            let nsColor = statusNSColor(percent: percent)
+            let stage = percent >= settings.critThreshold ? "crit"
+                      : percent >= settings.warnThreshold ? "warn" : "ok"
+            let key = "icon:\(stage)"
+            guard lastMenubarKey != key else { return }
+            lastMenubarKey = key
             button.title = ""
             button.attributedTitle = NSAttributedString(string: "✦", attributes: [
-                .foregroundColor: nsColor,
+                .foregroundColor: statusNSColor(percent: percent),
                 .font: NSFont.menuBarFont(ofSize: 0),
             ])
-
-        case .todayAndBurn:
-            let tokens = store.todayTokens(now: now)
-            let burn = store.tokensPerMinute(windowMinutes: 5, now: now)
-            // burn 0이면 누적만 고정. 아니면 6초 토글.
-            let showBurn = burn > 0 && (menubarTick % 2 == 1)
-            let text = showBurn
-                ? "✦ \(Self.formatRate(burn))"
-                : "✦ \(Self.formatTokens(tokens))"
-            button.attributedTitle = NSAttributedString(string: "")
-            button.title = tokens == 0 && burn == 0 ? "✦ –" : text
-
-        case .serviceRotation:
-            let services = rotationServicesForMenubar()
-            guard !services.isEmpty else {
-                button.attributedTitle = NSAttributedString(string: "")
-                button.title = "✦ –"
-                return
-            }
-            let svc = services[menubarTick % services.count]
-            let percent = store.maxUsedPercent(in: [svc])
-            let initial = String(svc.displayName.prefix(1))
-            // "● C 49%" — ● 만 서비스 색, 나머지는 기본.
-            let attr = NSMutableAttributedString()
-            attr.append(NSAttributedString(string: "● ", attributes: [
-                .foregroundColor: serviceNSColor(svc),
-                .font: NSFont.menuBarFont(ofSize: 0),
-            ]))
-            attr.append(NSAttributedString(string: "\(initial) \(Int(percent))%", attributes: [
-                .font: NSFont.menuBarFont(ofSize: 0),
-            ]))
-            button.title = ""
-            button.attributedTitle = attr
         }
     }
 
-    /// 메뉴바 로테이션용 서비스: limits가 있고 enabled인 것 (고정 순).
-    private func rotationServicesForMenubar() -> [ServiceID] {
-        ServiceID.allCases.filter {
-            settings.enabledServices.contains($0) && !(store.limits[$0]?.isEmpty ?? true)
-        }
+    /// 일반 텍스트 타이틀 set — 직전과 동일하면 생략.
+    private func setPlainTitle(_ title: String, on button: NSStatusBarButton) {
+        let key = "title:\(title)"
+        guard lastMenubarKey != key else { return }
+        lastMenubarKey = key
+        button.attributedTitle = NSAttributedString(string: "") // iconOnly 잔존 색 제거
+        button.title = title
     }
 
     private func statusNSColor(percent: Double) -> NSColor {
         if percent >= settings.critThreshold { return .systemRed }
         if percent >= settings.warnThreshold { return .systemOrange }
         return NSColor(red: 0.35, green: 0.82, blue: 0.54, alpha: 1)
-    }
-
-    private func serviceNSColor(_ service: ServiceID) -> NSColor {
-        switch service {
-        case .claude: return NSColor(red: 0.93, green: 0.60, blue: 0.47, alpha: 1)
-        case .codex: return NSColor(red: 0.31, green: 0.79, blue: 0.64, alpha: 1)
-        case .gemini: return NSColor(red: 0.47, green: 0.66, blue: 0.97, alpha: 1)
-        }
     }
 
     static func formatTokens(_ n: Int) -> String {
@@ -577,7 +542,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             win.makeKeyAndOrderFront(nil)
             return
         }
-        let view = SettingsView(settings: settings, hudController: hudController)
+        let view = SettingsView(settings: settings, hudController: hudController,
+                                onMenubarModeChange: { [weak self] in self?.updateStatusTitle() })
         let hosting = NSHostingController(rootView: view)
         let win = NSWindow(contentViewController: hosting)
         win.title = "AI Glass 설정"

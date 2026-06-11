@@ -2,24 +2,25 @@ import Foundation
 import Observation
 import AIGlassCore
 
-/// 메뉴바 표시 모드.
+/// 메뉴바 표시 모드. 자동 로테이션 없음 — 고정 표시 (깜빡임 방지, 사용자 결정).
+/// 구버전 todayAndBurn/serviceRotation 저장값은 raw 불일치로 기본값(todayTokens) 폴백.
 enum MenubarMode: String, CaseIterable, Identifiable {
-    /// 오늘 누적 토큰 ↔ 소모 속도(burn) 6초 로테이션 (기본).
-    case todayAndBurn
-    /// 서비스별 사용률 6초 로테이션 ("● C 49%").
-    case serviceRotation
-    /// 켜진 에이전트 중 최고 사용률 % (기존 동작).
+    /// 오늘 누적 토큰 "✦ 612M" (기본).
+    case todayTokens
+    /// 소모 속도 "✦ 38K/m".
+    case burnRate
+    /// 켜진 에이전트 중 최고 사용률 "✦ N%".
     case maxPercent
-    /// "✦"만 표시 (위험도 색 점).
-    case minimalDot
+    /// "✦"만 표시 (위험도 색).
+    case iconOnly
 
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .todayAndBurn: return "오늘 누적 ↔ 소모 속도"
-        case .serviceRotation: return "서비스별 사용률 로테이션"
+        case .todayTokens: return "오늘 누적 토큰"
+        case .burnRate: return "소모 속도 (t/min)"
         case .maxPercent: return "최고 사용률 %"
-        case .minimalDot: return "미니멀 (점만)"
+        case .iconOnly: return "아이콘만"
         }
     }
 }
@@ -111,7 +112,7 @@ final class AppSettings {
     var hudShowsCountdown: Bool {
         didSet { defaults.set(hudShowsCountdown, forKey: Key.hudShowsCountdown) }
     }
-    /// 메뉴바 표시 모드 (MenubarMode rawValue). 기본 todayAndBurn.
+    /// 메뉴바 표시 모드 (MenubarMode rawValue). 기본 todayTokens.
     var menubarMode: MenubarMode {
         didSet { defaults.set(menubarMode.rawValue, forKey: Key.menubarMode) }
     }
@@ -150,7 +151,8 @@ final class AppSettings {
         hudFrame = defaults.string(forKey: Key.hudFrame)
         hudShowsPercent = defaults.object(forKey: Key.hudShowsPercent) as? Bool ?? true
         hudShowsCountdown = defaults.object(forKey: Key.hudShowsCountdown) as? Bool ?? true
-        menubarMode = MenubarMode(rawValue: defaults.string(forKey: Key.menubarMode) ?? "") ?? .todayAndBurn
+        // 구버전 raw(todayAndBurn/serviceRotation 등) 불일치 시 기본값 폴백 = 마이그레이션.
+        menubarMode = MenubarMode(rawValue: defaults.string(forKey: Key.menubarMode) ?? "") ?? .todayTokens
         waveStyle = WaveStyle(rawValue: defaults.string(forKey: Key.waveStyle) ?? "") ?? .pulseBars
         funMilestone = defaults.object(forKey: Key.funMilestone) as? Bool ?? true
         funRecord = defaults.object(forKey: Key.funRecord) as? Bool ?? true

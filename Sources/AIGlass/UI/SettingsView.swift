@@ -6,6 +6,8 @@ import AIGlassCore
 struct SettingsView: View {
     @Bindable var settings: AppSettings
     weak var hudController: HUDPanelController?
+    /// 메뉴바 모드 변경 시 타이틀 즉시 갱신 (다음 refresh까지 안 기다림).
+    var onMenubarModeChange: () -> Void = {}
 
     var body: some View {
         Form {
@@ -52,7 +54,8 @@ struct SettingsView: View {
                         Text(mode.label).tag(mode)
                     }
                 }
-                Text("6초마다 정보를 전환하는 모드도 있습니다")
+                .onChange(of: settings.menubarMode) { _, _ in onMenubarModeChange() }
+                Text("메뉴바에 고정 표시할 정보를 고릅니다")
                     .font(.caption).foregroundStyle(.secondary)
             }
 

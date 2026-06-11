@@ -261,7 +261,7 @@ struct WavePill: View {
 
             HStack(spacing: 8) {
                 waveView(input)
-                    .frame(width: 36, height: 16)
+                    .frame(width: waveStyle.areaWidth, height: 16)
                 // 점+%+카운트다운 묶음: 로테이션(index) 변화 시 위↔아래 슬라이드 전환.
                 HStack(spacing: 4) {
                     if let current {

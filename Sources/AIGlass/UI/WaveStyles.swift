@@ -18,9 +18,16 @@ struct WaveInput {
     let percent: Double
 }
 
-/// 모든 웨이브 스타일이 공유하는 고정 폭(알약 외형 통일). 7바×3 + 6간격×2.5 = 36.
+/// 기본 웨이브 영역 폭. 7바×3 + 6간격×2.5 = 36. (orbGlow만 20 — areaWidth 참조)
 private let waveWidth: CGFloat = 36
 private let waveHeight: CGFloat = 16
+
+extension WaveStyle {
+    /// 스타일별 웨이브 영역 폭. 오브는 구슬 하나라 36pt가 과해 20pt로 축소.
+    var areaWidth: CGFloat {
+        self == .orbGlow ? 20 : 36
+    }
+}
 
 extension WaveInput {
     /// share 비례 누적 위치에 서비스 색을 배치한 가로 그라데이션.
@@ -94,8 +101,9 @@ struct SmoothWave: View {
         Canvas { ctx, size in
             let midY = size.height / 2
             let amp = (size.height / 2 - 1.5) * input.amplitude
-            // 속도도 activity 반응: 빠를수록 더 빠르게 흐른다.
-            let speed = 1.5 + 3.0 * input.level
+            // 속도는 상수 — 가변 속도 × t는 t가 거대해 위상 점프(깜빡임)를 만든다.
+            // 활동 반응은 진폭(amplitude)으로 충분.
+            let speed = 2.4
             var path = Path()
             let steps = 48
             for i in 0...steps {
@@ -158,10 +166,10 @@ struct WaterFillWave: View {
 struct OrbGlowWave: View {
     let input: WaveInput
     var body: some View {
-        // 맥동 속도 = activityLevel (빠를수록 빠른 숨).
-        let speed = 1.2 + 3.0 * input.level
-        let pulse = 0.5 + 0.5 * sin(input.t * speed)
-        let scale = 0.82 + 0.18 * pulse
+        // 맥동 속도는 상수 — 가변 속도 × t는 위상 점프(깜빡임). 활동은 숨 깊이로 반영.
+        let pulse = 0.5 + 0.5 * sin(input.t * 1.8)
+        let depth = 0.10 + 0.12 * input.level
+        let scale = (1.0 - depth) + depth * pulse
         let color = input.mixedColor
         ZStack {
             Circle()
@@ -173,7 +181,8 @@ struct OrbGlowWave: View {
                                      center: .center, startRadius: 0, endRadius: 8))
                 .scaleEffect(scale)
         }
-        .frame(width: waveWidth, height: waveHeight)
+        // 구슬 하나는 36pt가 과해 알약이 비어 보임 — 오브만 20pt로 축소.
+        .frame(width: WaveStyle.orbGlow.areaWidth, height: waveHeight)
     }
 }
 
@@ -184,18 +193,18 @@ struct HeartbeatWave: View {
     var body: some View {
         Canvas { ctx, size in
             let midY = size.height / 2
-            // 박동 주기: activity 빠를수록 짧게 (idle은 잔잔한 안정 심박).
-            let period = 2.6 - 1.8 * input.level   // 초당 박동 간격 (0.8~2.6s)
-            let amp = (size.height / 2 - 1.0) * (0.45 + 0.55 * input.amplitude)
-            // 스크롤 위상 (px 시프트 금지 — 시간으로 직접 평가).
-            let scrollT = input.t / period
+            // 활동은 진폭에만 반영 — 차분한 톤.
+            let amp = (size.height / 2 - 1.0) * (0.5 + 0.5 * input.amplitude)
+            // 고정 주기 연속 스크롤. 가변 주기 × t는 t(referenceDate 초)가 거대해
+            // 주기의 미세 변화에도 위상이 수백 사이클씩 점프 → 깜빡임. 상수로 고정한다.
+            let scrollT = input.t / 2.4
             var path = Path()
             let steps = 80
             for i in 0...steps {
                 let frac = Double(i) / Double(steps)
                 let x = size.width * frac
                 // 각 x를 박동 주기 좌표로 (스크롤하여 흐름).
-                let cyc = (frac * 2.0 + scrollT).truncatingRemainder(dividingBy: 1.0)
+                let cyc = (frac * 1.6 + scrollT).truncatingRemainder(dividingBy: 1.0)
                 let y = midY - amp * Self.ecg(cyc)
                 if i == 0 { path.move(to: CGPoint(x: x, y: y)) }
                 else { path.addLine(to: CGPoint(x: x, y: y)) }
@@ -208,19 +217,20 @@ struct HeartbeatWave: View {
         .frame(width: waveWidth, height: waveHeight)
     }
 
-    /// 0...1 주기 좌표를 받아 매끄러운 심전도 파형(-0.3...1.0)을 반환.
-    /// 가우시안 합으로 P-QRS-T를 근사 (미분 연속 → 픽셀 시프트 없는 부드러운 스크롤).
+    /// 0...1 주기 좌표를 받아 매끄러운 심전도 파형을 반환.
+    /// 가우시안 합으로 P-QRS-T를 근사 (미분 연속 → 끊김 없는 스크롤).
+    /// 스파이크를 낮추고 폭을 넓혀 차분한 톤.
     static func ecg(_ x: Double) -> Double {
         func g(_ c: Double, _ w: Double) -> Double {
             let d = (x - c) / w
             return exp(-d * d)
         }
-        // P파(작은 양) - Q(작은 음) - R(큰 양) - S(음) - T파(중간 양)
-        let p =  0.12 * g(0.18, 0.035)
-        let q = -0.18 * g(0.35, 0.012)
-        let r =  1.00 * g(0.40, 0.014)
-        let s = -0.35 * g(0.45, 0.016)
-        let tw = 0.28 * g(0.68, 0.05)
+        // P파(작은 양) - Q(작은 음) - R(완화된 양) - S(완화된 음) - T파(중간 양)
+        let p =  0.12 * g(0.18, 0.045)
+        let q = -0.10 * g(0.35, 0.018)
+        let r =  0.72 * g(0.40, 0.022)
+        let s = -0.20 * g(0.45, 0.022)
+        let tw = 0.24 * g(0.68, 0.06)
         return p + q + r + s + tw
     }
 }

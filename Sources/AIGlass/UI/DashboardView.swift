@@ -299,7 +299,7 @@ private struct ServiceRow: View {
     }
 }
 
-/// 숫자 카운트업 카드: onAppear 시 0→값을 0.8초 8스텝 보간 (.numericText 전환).
+/// 숫자 카운트업 카드: onAppear 시 0→값을 0.45초 6스텝 보간 (.numericText 전환).
 private struct StatCard: View {
     let value: Double
     let format: (Double) -> String
@@ -318,11 +318,11 @@ private struct StatCard: View {
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
         .task {
             displayed = 0
-            for step in 1...8 {
-                try? await Task.sleep(for: .milliseconds(100))
+            for step in 1...6 {
+                try? await Task.sleep(for: .milliseconds(75))
                 guard !Task.isCancelled else { return }
-                withAnimation(.easeOut(duration: 0.12)) {
-                    displayed = value * Double(step) / 8.0
+                withAnimation(.easeOut(duration: 0.09)) {
+                    displayed = value * Double(step) / 6.0
                 }
             }
         }
@@ -348,11 +348,13 @@ private struct TrendsTab: View {
         var days: Int { self == .week ? 7 : 30 }
     }
 
+    /// id가 (day, service)로 안정적이어야 growFactor 변화 시 Chart가 같은 바로 인식해
+    /// y값을 보간(차오름)한다. UUID()는 body 평가마다 바뀌어 애니메이션이 끊겼다.
     private struct Point: Identifiable {
-        let id = UUID()
         let day: Date
         let service: ServiceID
         let tokens: Int
+        var id: String { "\(day.timeIntervalSinceReferenceDate)-\(service.rawValue)" }
     }
 
     private var enabled: [ServiceID] {
@@ -405,9 +407,15 @@ private struct TrendsTab: View {
         .onAppear { startGrow() }
     }
 
+    /// 0 프레임을 무애니메이션으로 먼저 커밋한 뒤 다음 틱에 1로 스프링 — 같은 트랜잭션에서
+    /// 0→1을 연달아 쓰면 리셋이 합쳐져 성장이 생략될 수 있다 (range 전환 시).
     private func startGrow() {
-        growFactor = 0
-        withAnimation(.spring(duration: 0.8)) { growFactor = 1 }
+        var tx = Transaction()
+        tx.disablesAnimations = true
+        withTransaction(tx) { growFactor = 0 }
+        Task { @MainActor in
+            withAnimation(.spring(duration: 0.8)) { growFactor = 1 }
+        }
     }
 
     private var chart: some View {
