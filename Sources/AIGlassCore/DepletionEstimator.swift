@@ -2,11 +2,14 @@ import Foundation
 
 /// 한도 소진 예측 결과.
 public struct Depletion: Equatable, Sendable {
+    /// 어느 윈도우(5h/주간/일일)에 대한 예측인지.
+    public let kind: LimitWindow.Kind
     /// 현재 추세로 100%에 도달할 추정 시각.
     public let etaTo100: Date
     /// 리셋보다 먼저 소진될지 여부 (resetsAt이 있고 etaTo100 < resetsAt).
     public let willDepleteBeforeReset: Bool
-    public init(etaTo100: Date, willDepleteBeforeReset: Bool) {
+    public init(kind: LimitWindow.Kind, etaTo100: Date, willDepleteBeforeReset: Bool) {
+        self.kind = kind
         self.etaTo100 = etaTo100
         self.willDepleteBeforeReset = willDepleteBeforeReset
     }
@@ -23,7 +26,9 @@ public enum DepletionEstimator {
     ///
     /// `etaTo100 = now + (100 - 최신%) / slope` 분.
     /// `willDepleteBeforeReset = resetsAt != nil && etaTo100 < resetsAt`.
-    public static func estimate(samples: [(Date, Double)], resetsAt: Date?, now: Date) -> Depletion? {
+    /// `kind`는 결과 Depletion에 그대로 실린다 (기본 .session5h — 분 단위 기울기 추정의 주 용도).
+    public static func estimate(samples: [(Date, Double)], resetsAt: Date?, now: Date,
+                                kind: LimitWindow.Kind = .session5h) -> Depletion? {
         guard samples.count >= 3 else { return nil }
         let sorted = samples.sorted { $0.0 < $1.0 }
         guard let first = sorted.first, let last = sorted.last else { return nil }
@@ -48,6 +53,38 @@ public enum DepletionEstimator {
         guard minutesTo100 > 0 else { return nil }
         let eta = now.addingTimeInterval(minutesTo100 * 60)
         let willDeplete = resetsAt.map { eta < $0 } ?? false
-        return Depletion(etaTo100: eta, willDepleteBeforeReset: willDeplete)
+        return Depletion(kind: kind, etaTo100: eta, willDepleteBeforeReset: willDeplete)
+    }
+
+    /// 일 단위 소모율(%/day) 추정 — 주간 윈도우용.
+    ///
+    /// 연속 일 페어의 (다음날% - 전날%) 중 **양수만** 평균한다.
+    /// 리셋을 걸쳐 음수가 되는 페어는 제외하고, 양수 페어가 1개 미만이면 nil.
+    /// `snapshots`는 (day, percent) 쌍 — 호출자가 일 오름차순으로 넘기지 않아도 내부 정렬.
+    public static func weeklyDailyRate(snapshots: [(day: Date, percent: Double)]) -> Double? {
+        guard snapshots.count >= 2 else { return nil }
+        let sorted = snapshots.sorted { $0.day < $1.day }
+        var positives: [Double] = []
+        for i in 1..<sorted.count {
+            let delta = sorted[i].percent - sorted[i - 1].percent
+            if delta > 0 { positives.append(delta) }
+        }
+        guard positives.count >= 1 else { return nil }
+        return positives.reduce(0, +) / Double(positives.count)
+    }
+
+    /// 주간 한도의 일 단위 소진 예측.
+    ///
+    /// `daysTo100 = (100 - current) / rate` → `etaTo100 = now + daysTo100일`.
+    /// rate가 미미하면(≤ 0.5%/일) 노이즈로 보고 nil. current가 이미 100% 이상이어도 nil.
+    /// `willDepleteBeforeReset = resetsAt != nil && etaTo100 < resetsAt`.
+    public static func weeklyDepletion(current: Double, rate: Double, resetsAt: Date?, now: Date) -> Depletion? {
+        guard rate > 0.5 else { return nil }
+        let remaining = 100 - current
+        guard remaining > 0 else { return nil }
+        let daysTo100 = remaining / rate
+        let eta = now.addingTimeInterval(daysTo100 * 24 * 3600)
+        let willDeplete = resetsAt.map { eta < $0 } ?? false
+        return Depletion(kind: .weekly, etaTo100: eta, willDepleteBeforeReset: willDeplete)
     }
 }

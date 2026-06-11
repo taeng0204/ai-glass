@@ -153,10 +153,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let now = Date()
         // 설정 임계값 주입.
         eventEngine.thresholds = [Int(settings.warnThreshold), Int(settings.critThreshold)]
-        // 서비스별 소진 예측.
-        var depletions: [ServiceID: Depletion] = [:]
+        // 서비스별 소진 예측: 5h(store, 분 단위 기울기) + 주간(statsStore 스냅샷 → 일단위 추정).
+        var depletions: [ServiceID: [Depletion]] = [:]
         for service in ServiceID.allCases {
-            if let d = store.depletion(for: service, now: now) { depletions[service] = d }
+            var list: [Depletion] = []
+            if let d = store.depletion(for: service, now: now) { list.append(d) }
+            if let w = weeklyDepletion(for: service, now: now) { list.append(w) }
+            if !list.isEmpty { depletions[service] = list }
         }
         // 세션 리포트: windowReset 발화 시 직전 5h 윈도우 요약을 subtitle로.
         let reportProvider: (ServiceID) -> String? = { [store] service in
@@ -225,6 +228,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard now.timeIntervalSince(lastUpsertAt) >= 60 else { return }
         lastUpsertAt = now
         statsStore.upsert(events: store.events, calendar: .utc)
+        recordPercentSnapshots(now: now)
+    }
+
+    /// 현재 limits의 각 윈도우 사용률(%)을 (오늘 UTC) percent_snapshots에 기록한다.
+    /// REPLACE라 하루 동안 마지막 관측값만 남는다 — 주간 일단위 소진 추정의 입력.
+    private func recordPercentSnapshots(now: Date) {
+        guard let statsStore else { return }
+        for (service, windows) in store.limits {
+            for window in windows {
+                statsStore.recordPercentSnapshot(service: service, kind: window.kind,
+                                                 percent: window.usedPercent, day: now)
+            }
+        }
+    }
+
+    /// statsStore의 percent 스냅샷으로 주간 한도의 일단위 소진을 추정한다.
+    /// 현재 주간 윈도우가 있어야 하며, 그 resetsAt 기준 `willDepleteBeforeReset`일 때만 의미.
+    private func weeklyDepletion(for service: ServiceID, now: Date) -> Depletion? {
+        guard let statsStore,
+              let weekly = store.limits[service]?.first(where: { $0.kind == .weekly }) else { return nil }
+        let snapshots = statsStore.percentSnapshots(service: service, kind: .weekly, days: 8, now: now)
+        guard let rate = DepletionEstimator.weeklyDailyRate(snapshots: snapshots) else { return nil }
+        guard let d = DepletionEstimator.weeklyDepletion(current: weekly.usedPercent, rate: rate,
+                                                         resetsAt: weekly.resetsAt, now: now) else { return nil }
+        return d.willDepleteBeforeReset ? d : nil
     }
 
     // MARK: - 브리핑

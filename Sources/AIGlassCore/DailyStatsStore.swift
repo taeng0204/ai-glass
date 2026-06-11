@@ -45,6 +45,16 @@ public final class DailyStatsStore {
             sqlite3_close(db)
             return nil
         }
+        let createSnapshots = """
+        CREATE TABLE IF NOT EXISTS percent_snapshots(
+            day TEXT, service TEXT, kind TEXT, percent REAL,
+            PRIMARY KEY(day, service, kind)
+        )
+        """
+        guard sqlite3_exec(db, createSnapshots, nil, nil, nil) == SQLITE_OK else {
+            sqlite3_close(db)
+            return nil
+        }
     }
 
     deinit {
@@ -195,5 +205,54 @@ public final class DailyStatsStore {
             total += CostEstimator.cost(of: synth)
         }
         return total
+    }
+
+    // MARK: - percent 스냅샷 (주간 일단위 소진 추정용)
+
+    /// (day, service, kind)에 사용률(%) 스냅샷을 `INSERT OR REPLACE`로 기록한다.
+    /// REPLACE이므로 같은 날 여러 번 호출하면 **마지막 관측값**만 남는다.
+    /// `day`는 UTC "yyyy-MM-dd"로 정규화된다 (daily_stats와 동일 기준).
+    public func recordPercentSnapshot(service: ServiceID, kind: LimitWindow.Kind, percent: Double, day: Date) {
+        let dayStr = Self.dayFormatter.string(from: day)
+        let sql = """
+        INSERT OR REPLACE INTO percent_snapshots(day, service, kind, percent)
+        VALUES (?, ?, ?, ?)
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, dayStr, -1, Self.SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, service.rawValue, -1, Self.SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 3, kind.rawValue, -1, Self.SQLITE_TRANSIENT)
+        sqlite3_bind_double(stmt, 4, percent)
+        sqlite3_step(stmt)
+    }
+
+    /// (service, kind)의 최근 `days`일 percent 스냅샷을 day 오름차순으로 반환한다.
+    /// day는 UTC 자정 Date로 복원된다.
+    public func percentSnapshots(service: ServiceID, kind: LimitWindow.Kind, days: Int,
+                                 now: Date = Date(), calendar: Calendar = .utc) -> [(day: Date, percent: Double)] {
+        let cutoff = cutoffDayString(days: days, now: now, calendar: calendar)
+        let sql = """
+        SELECT day, percent FROM percent_snapshots
+        WHERE service = ? AND kind = ? AND day >= ?
+        ORDER BY day
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, service.rawValue, -1, Self.SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, kind.rawValue, -1, Self.SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 3, cutoff, -1, Self.SQLITE_TRANSIENT)
+
+        var result: [(day: Date, percent: Double)] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let dayC = sqlite3_column_text(stmt, 0) else { continue }
+            let dayStr = String(cString: dayC)
+            guard let day = Self.dayFormatter.date(from: dayStr) else { continue }
+            let percent = sqlite3_column_double(stmt, 1)
+            result.append((day: day, percent: percent))
+        }
+        return result
     }
 }

@@ -46,14 +46,19 @@ public final class UsageStore {
         }
     }
 
-    /// 해당 서비스의 윈도우 중 **현재 사용률이 가장 높은** 윈도우의 시계열로 소진을 추정한다.
-    /// resetsAt은 그 윈도우의 값을 사용한다. 추정 불가 시 nil.
+    /// 서비스의 **session5h 윈도우** 시계열로 소진을 추정한다 (분 단위 기울기).
+    /// 사용자 의미론: 5h는 **자기 세션 리셋 전에 다 쓸 때만** 경고한다 —
+    /// 따라서 그 윈도우 resetsAt 기준 `willDepleteBeforeReset`일 때만 non-nil을 반환한다.
+    /// ('리셋 후 소진 예정'은 노이즈이므로 표시하지 않는다.)
+    /// session5h 윈도우가 없거나 추정 불가 시 nil. (주간은 App 레벨에서 statsStore로 계산.)
     public func depletion(for service: ServiceID, now: Date) -> Depletion? {
-        guard let windows = limits[service], !windows.isEmpty else { return nil }
-        guard let top = windows.max(by: { $0.usedPercent < $1.usedPercent }) else { return nil }
-        guard let series = percentHistory[service]?[top.kind] else { return nil }
+        guard let windows = limits[service],
+              let session = windows.first(where: { $0.kind == .session5h }) else { return nil }
+        guard let series = percentHistory[service]?[.session5h] else { return nil }
         let samples = series.map { ($0.date, $0.percent) }
-        return DepletionEstimator.estimate(samples: samples, resetsAt: top.resetsAt, now: now)
+        guard let d = DepletionEstimator.estimate(samples: samples, resetsAt: session.resetsAt,
+                                                  now: now, kind: .session5h) else { return nil }
+        return d.willDepleteBeforeReset ? d : nil
     }
 
     public func addEvents(_ batch: [(event: TokenEvent, dedupKey: String?)]) {

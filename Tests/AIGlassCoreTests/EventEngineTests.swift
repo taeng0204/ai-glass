@@ -72,7 +72,7 @@ import Testing
     let engine = EventEngine()
     let now = Date()
     let limits: [ServiceID: [LimitWindow]] = [.claude: [LimitWindow(kind: .session5h, usedPercent: 60, resetsAt: now.addingTimeInterval(3600))]]
-    let dep: [ServiceID: Depletion] = [.claude: Depletion(etaTo100: now.addingTimeInterval(20 * 60), willDepleteBeforeReset: true)]
+    let dep: [ServiceID: [Depletion]] = [.claude: [Depletion(kind: .session5h, etaTo100: now.addingTimeInterval(20 * 60), willDepleteBeforeReset: true)]]
     let events = engine.evaluate(limits: limits, burnRate: 0, baseline: 0, now: now, depletions: dep)
     #expect(events.count == 1)
     guard case .depletionRisk(.claude) = events[0].kind else {
@@ -80,16 +80,42 @@ import Testing
         return
     }
     #expect(events[0].title.contains("소진 임박"))
+    #expect(events[0].subtitle.contains("5h 한도 소진 (리셋 전)"))
     // 30분 쿨다운 내 재발화 없음
     #expect(engine.evaluate(limits: limits, burnRate: 0, baseline: 0, now: now.addingTimeInterval(60), depletions: dep).isEmpty)
     // 쿨다운 경과 후 재발화
     #expect(engine.evaluate(limits: limits, burnRate: 0, baseline: 0, now: now.addingTimeInterval(31 * 60), depletions: dep).count == 1)
 }
 
+@MainActor @Test func firesWeeklyDepletionMessage() {
+    let engine = EventEngine()
+    let now = Date()
+    let limits: [ServiceID: [LimitWindow]] = [.claude: [LimitWindow(kind: .weekly, usedPercent: 60, resetsAt: now.addingTimeInterval(7 * 86400))]]
+    // 4일 후 소진(올림 4일).
+    let dep: [ServiceID: [Depletion]] = [.claude: [Depletion(kind: .weekly, etaTo100: now.addingTimeInterval(4 * 86400), willDepleteBeforeReset: true)]]
+    let events = engine.evaluate(limits: limits, burnRate: 0, baseline: 0, now: now, depletions: dep)
+    #expect(events.count == 1)
+    #expect(events[0].subtitle == "이 추세면 약 4일 후 주간 한도 소진")
+}
+
+@MainActor @Test func fivesAndWeeklyHaveSeparateCooldowns() {
+    let engine = EventEngine()
+    let now = Date()
+    let dep: [ServiceID: [Depletion]] = [.claude: [
+        Depletion(kind: .session5h, etaTo100: now.addingTimeInterval(20 * 60), willDepleteBeforeReset: true),
+        Depletion(kind: .weekly, etaTo100: now.addingTimeInterval(3 * 86400), willDepleteBeforeReset: true),
+    ]]
+    // 둘 다 첫 발화 — 5h가 주간보다 먼저.
+    let events = engine.evaluate(limits: [:], burnRate: 0, baseline: 0, now: now, depletions: dep)
+    #expect(events.count == 2)
+    #expect(events[0].subtitle.contains("5h 한도"))
+    #expect(events[1].subtitle.contains("주간 한도"))
+}
+
 @MainActor @Test func depletionNotFiredWhenNotBeforeReset() {
     let engine = EventEngine()
     let now = Date()
-    let dep: [ServiceID: Depletion] = [.claude: Depletion(etaTo100: now.addingTimeInterval(20 * 60), willDepleteBeforeReset: false)]
+    let dep: [ServiceID: [Depletion]] = [.claude: [Depletion(kind: .session5h, etaTo100: now.addingTimeInterval(20 * 60), willDepleteBeforeReset: false)]]
     #expect(engine.evaluate(limits: [:], burnRate: 0, baseline: 0, now: now, depletions: dep).isEmpty)
 }
 
@@ -98,7 +124,7 @@ import Testing
     let now = Date()
     // threshold 교차(95) + depletion + spike 동시
     let limits: [ServiceID: [LimitWindow]] = [.codex: [LimitWindow(kind: .session5h, usedPercent: 95, resetsAt: now.addingTimeInterval(3600))]]
-    let dep: [ServiceID: Depletion] = [.codex: Depletion(etaTo100: now.addingTimeInterval(20 * 60), willDepleteBeforeReset: true)]
+    let dep: [ServiceID: [Depletion]] = [.codex: [Depletion(kind: .session5h, etaTo100: now.addingTimeInterval(20 * 60), willDepleteBeforeReset: true)]]
     let events = engine.evaluate(limits: limits, burnRate: 9000, baseline: 1000, now: now, depletions: dep)
     guard case .limitThreshold = events[0].kind else { Issue.record("threshold first"); return }
     guard case .depletionRisk = events[1].kind else { Issue.record("depletion second"); return }

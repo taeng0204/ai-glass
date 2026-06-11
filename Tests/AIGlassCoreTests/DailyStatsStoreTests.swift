@@ -101,3 +101,35 @@ private func tempDBPath() -> String {
     let cost = store.totalCost(days: 7, now: now, calendar: .utc)
     #expect(abs(cost - 30.0) < 1e-6)
 }
+
+// MARK: - percent_snapshots
+
+@MainActor @Test func percentSnapshotRoundTripAndReplace() {
+    let store = try! #require(DailyStatsStore(path: tempDBPath()))
+    let day0 = ISO8601.date("2026-06-08T03:00:00Z")!
+    let day1 = day0.addingTimeInterval(86400)
+    let day2 = day0.addingTimeInterval(2 * 86400)
+    store.recordPercentSnapshot(service: .claude, kind: .weekly, percent: 10, day: day0)
+    store.recordPercentSnapshot(service: .claude, kind: .weekly, percent: 25, day: day1)
+    // 같은 날 재기록 → REPLACE로 마지막 값만 남음
+    store.recordPercentSnapshot(service: .claude, kind: .weekly, percent: 40, day: day2)
+    store.recordPercentSnapshot(service: .claude, kind: .weekly, percent: 55, day: day2)
+    // 다른 kind/service는 섞이지 않음
+    store.recordPercentSnapshot(service: .claude, kind: .session5h, percent: 99, day: day2)
+    store.recordPercentSnapshot(service: .codex, kind: .weekly, percent: 99, day: day2)
+
+    let snaps = store.percentSnapshots(service: .claude, kind: .weekly, days: 8, now: day2)
+    #expect(snaps.map(\.percent) == [10, 25, 55])
+    // day 오름차순
+    for i in 1..<snaps.count { #expect(snaps[i - 1].day < snaps[i].day) }
+}
+
+@MainActor @Test func percentSnapshotDayRangeFilters() {
+    let store = try! #require(DailyStatsStore(path: tempDBPath()))
+    let now = ISO8601.date("2026-06-10T12:00:00Z")!
+    store.recordPercentSnapshot(service: .claude, kind: .weekly, percent: 5,
+                                day: now.addingTimeInterval(-40 * 86400))
+    store.recordPercentSnapshot(service: .claude, kind: .weekly, percent: 50, day: now)
+    let snaps = store.percentSnapshots(service: .claude, kind: .weekly, days: 8, now: now)
+    #expect(snaps.map(\.percent) == [50])  // 40일 전은 범위 밖
+}

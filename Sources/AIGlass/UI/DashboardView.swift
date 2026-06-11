@@ -75,7 +75,7 @@ struct DashboardView: View {
                 // 첫 오픈과 동일하게 재생된다 (전환 중 복귀 시 뷰 재사용 방지).
                 switch tab {
                 case .overview:
-                    OverviewTab(store: store, settings: settings)
+                    OverviewTab(store: store, statsStore: statsStore, settings: settings)
                         .id(tabVisit)
                         .transition(Self.tabTransition)
                 case .trends:
@@ -103,6 +103,7 @@ struct DashboardView: View {
 
 private struct OverviewTab: View {
     let store: UsageStore
+    var statsStore: DailyStatsStore? = nil
     let settings: AppSettings
 
     /// 서비스당 표시 순서: 5h → 주간 → 일일 (호버 카드와 동일 의미론).
@@ -119,7 +120,7 @@ private struct OverviewTab: View {
                            approxReset: { kind in
                                store.approxFullReset(service: row.service, kind: kind, now: now)
                            },
-                           depletion: store.depletion(for: row.service, now: now),
+                           depletions: depletions(for: row.service, now: now),
                            warn: settings.warnThreshold,
                            crit: settings.critThreshold,
                            staggerBase: row.base)
@@ -133,6 +134,24 @@ private struct OverviewTab: View {
                          format: { formatTokens(Int($0)) }, label: "현재 t/min")
             }
         }
+    }
+
+    /// 서비스의 윈도우별 소진 예측 (kind → Depletion). 5h는 store, 주간은 statsStore 스냅샷 기반.
+    /// 둘 다 `willDepleteBeforeReset`일 때만 포함된다 (App.evaluateEvents와 동일 규칙).
+    private func depletions(for service: ServiceID, now: Date) -> [LimitWindow.Kind: Depletion] {
+        var result: [LimitWindow.Kind: Depletion] = [:]
+        if let d = store.depletion(for: service, now: now) { result[d.kind] = d }
+        if let statsStore,
+           let weekly = store.limits[service]?.first(where: { $0.kind == .weekly }) {
+            let snapshots = statsStore.percentSnapshots(service: service, kind: .weekly, days: 8, now: now)
+            if let rate = DepletionEstimator.weeklyDailyRate(snapshots: snapshots),
+               let w = DepletionEstimator.weeklyDepletion(current: weekly.usedPercent, rate: rate,
+                                                          resetsAt: weekly.resetsAt, now: now),
+               w.willDepleteBeforeReset {
+                result[.weekly] = w
+            }
+        }
+        return result
     }
 
     /// 서비스별 정렬 윈도우 + 전체 게이지 행 누적 인덱스(stagger 딜레이용).
@@ -182,7 +201,8 @@ private struct ServiceRow: View {
     let service: ServiceID
     let windows: [LimitWindow]
     let approxReset: (LimitWindow.Kind) -> Date?
-    var depletion: Depletion? = nil
+    /// 윈도우 kind별 소진 경고 (해당 윈도우 행 바로 아래에 표시).
+    var depletions: [LimitWindow.Kind: Depletion] = [:]
     let warn: Double
     let crit: Double
     /// 전체 개요에서 이 서비스 첫 게이지 행의 인덱스 — delay 0.06*i.
@@ -211,13 +231,30 @@ private struct ServiceRow: View {
             } else {
                 ForEach(Array(windows.enumerated()), id: \.offset) { idx, window in
                     windowRow(window, delay: 0.06 * Double(staggerBase + idx))
+                    if let depletion = depletions[window.kind], depletion.willDepleteBeforeReset {
+                        depletionLine(depletion)
+                    }
                 }
             }
-            if let depletion, depletion.willDepleteBeforeReset {
-                Text("⚠️ 이 속도면 \(EventEngine.countdown(to: depletion.etaTo100, from: Date())) 후 소진 (리셋 전)")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.orange)
-            }
+        }
+    }
+
+    /// 윈도우별 소진 경고 줄 — 해당 윈도우 행 바로 아래.
+    /// 5h: ⚠️ + orange(긴급), 주간: ⚠️ 없이 secondary(차분한 추세 안내).
+    @ViewBuilder
+    private func depletionLine(_ depletion: Depletion) -> some View {
+        let now = Date()
+        switch depletion.kind {
+        case .weekly:
+            Text("이 추세면 약 \(EventEngine.daysUntil(depletion.etaTo100, from: now))일 후 소진")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .padding(.leading, 14)
+        default:
+            Text("⚠️ 이 속도면 \(EventEngine.countdown(to: depletion.etaTo100, from: now)) 후 5h 한도 소진 (리셋 전)")
+                .font(.system(size: 10))
+                .foregroundStyle(.orange)
+                .padding(.leading, 14)
         }
     }
 
