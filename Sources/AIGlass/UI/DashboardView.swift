@@ -118,7 +118,6 @@ private struct OverviewTab: View {
                 ServiceRow(service: row.service,
                            windows: row.windows,
                            isLoadingLimits: row.service == .claude && hasUsage(for: .claude),
-                           detailText: row.service == .gemini ? antigravityRequestDetail(now: now) : nil,
                            approxReset: { kind in
                                store.approxFullReset(service: row.service, kind: kind, now: now)
                            },
@@ -179,11 +178,6 @@ private struct OverviewTab: View {
     private func hasUsage(for service: ServiceID) -> Bool {
         store.events.contains { $0.service == service }
     }
-    private func antigravityRequestDetail(now: Date) -> String? {
-        let start = Calendar.current.startOfDay(for: now)
-        let count = store.geminiRequestDates.filter { $0 >= start && $0 <= now }.count
-        return count > 0 ? "오늘 \(count)회" : nil
-    }
     /// 오늘 이벤트의 추정 비용 (API 환산 추정치, enabled 서비스만).
     private func todayCost(_ services: [ServiceID], now: Date) -> Double {
         let start = Calendar.current.startOfDay(for: now)
@@ -211,7 +205,6 @@ private struct ServiceRow: View {
     let service: ServiceID
     let windows: [LimitWindow]
     var isLoadingLimits: Bool = false
-    var detailText: String? = nil
     let approxReset: (LimitWindow.Kind) -> Date?
     /// 윈도우 kind별 소진 경고 (해당 윈도우 행 바로 아래에 표시).
     var depletions: [LimitWindow.Kind: Depletion] = [:]
@@ -229,12 +222,6 @@ private struct ServiceRow: View {
             HStack {
                 Circle().fill(Theme.color(for: service)).frame(width: 8, height: 8)
                 Text(service.displayName).font(.system(size: 12, weight: .semibold))
-                if let detailText {
-                    Text(detailText)
-                        .font(.system(size: 9.5, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
                 Spacer()
                 Text(primary.map { Theme.formatUsagePercent($0.usedPercent) } ?? "–")
                     .font(.system(size: 12, weight: .bold).monospacedDigit())
