@@ -176,9 +176,9 @@ private struct TrendsTab: View {
                 .cornerRadius(3)
         }
         .chartForegroundStyleScale([
-            "Claude Code": Theme.color(for: .claude),
-            "Codex": Theme.color(for: .codex),
-            "Gemini": Theme.color(for: .gemini),
+            ServiceID.claude.displayName: Theme.color(for: .claude),
+            ServiceID.codex.displayName: Theme.color(for: .codex),
+            ServiceID.gemini.displayName: Theme.color(for: .gemini),
         ])
         .chartXAxis {
             AxisMarks(values: .stride(by: .day)) {
@@ -217,7 +217,7 @@ private struct ProjectsTab: View {
                 }
             }
             if !projects.isEmpty {
-                Text("Claude Code · Codex 기준 (Gemini는 프로젝트 정보 없음)")
+                Text("Claude · Codex 기준 (Gemini는 프로젝트 정보 없음)")
                     .font(.system(size: 9)).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }

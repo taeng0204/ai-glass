@@ -239,6 +239,7 @@ struct EventCard: View {
         case .depletionRisk: return "hourglass.bottomhalf.filled"
         case .windowReset: return "sparkles"
         case .burnSpike: return "flame.fill"
+        case .briefing: return "sparkles"  // W2에서 Period별 스타일링
         }
     }
     private var iconColor: Color {
@@ -247,6 +248,7 @@ struct EventCard: View {
         case .depletionRisk: return .orange
         case .windowReset: return .green
         case .burnSpike: return .pink
+        case .briefing: return .yellow  // W2에서 Period별 스타일링
         }
     }
 }

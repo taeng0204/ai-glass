@@ -29,3 +29,15 @@ private let claudeLine = """
     let line = claudeLine.replacingOccurrences(of: "claude-opus-4-8", with: "<synthetic>")
     #expect(ClaudeLogParser.parse(line: line) == nil)
 }
+
+@Test func cwdEqualToHomeBecomesTilde() throws {
+    let prev = ClaudeLogParser.homeDirectoryOverride
+    defer { ClaudeLogParser.homeDirectoryOverride = prev }
+    ClaudeLogParser.homeDirectoryOverride = "/Users/me"
+    let line = claudeLine.replacingOccurrences(of: #""cwd":"/tmp""#, with: #""cwd":"/Users/me""#)
+    let (event, _) = try #require(ClaudeLogParser.parse(line: line))
+    #expect(event.project == "~")
+    // 홈이 아니면 lastPathComponent
+    let (event2, _) = try #require(ClaudeLogParser.parse(line: claudeLine))
+    #expect(event2.project == "tmp")
+}

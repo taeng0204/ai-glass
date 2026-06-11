@@ -1,6 +1,18 @@
 import Foundation
 
 public enum ClaudeLogParser {
+    /// 홈 디렉토리 경로 주입 (테스트용). nil이면 `NSHomeDirectory()`.
+    nonisolated(unsafe) public static var homeDirectoryOverride: String?
+
+    /// cwd → 프로젝트명. cwd가 홈 디렉토리와 정확히 일치하면 "~", 아니면 lastPathComponent.
+    static func project(forCwd cwd: String?) -> String? {
+        guard let cwd else { return nil }
+        let home = homeDirectoryOverride ?? NSHomeDirectory()
+        if cwd == home { return "~" }
+        let last = (cwd as NSString).lastPathComponent
+        return last.isEmpty ? nil : last
+    }
+
     /// 한 JSONL 라인 → 토큰 이벤트. usage가 없는 라인(user 메시지 등)은 nil.
     public static func parse(line: String) -> (event: TokenEvent, dedupKey: String?)? {
         guard !line.isEmpty,
@@ -17,11 +29,7 @@ public enum ClaudeLogParser {
 
         func intValue(_ key: String) -> Int { (usage[key] as? NSNumber)?.intValue ?? 0 }
 
-        let cwd = obj["cwd"] as? String
-        let project: String? = cwd.flatMap {
-            let last = ($0 as NSString).lastPathComponent
-            return last.isEmpty ? nil : last
-        }
+        let project = self.project(forCwd: obj["cwd"] as? String)
 
         let event = TokenEvent(
             service: .claude,

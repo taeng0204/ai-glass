@@ -109,6 +109,32 @@ private func makeStore(now: Date) -> UsageStore {
     #expect(s.hasPrefix("지난 세션:"))
 }
 
+@MainActor @Test func projectServiceBreakdownGroupsAndSorts() {
+    let now = ISO8601.date("2026-06-10T12:00:00Z")!
+    let store = UsageStore()
+    func ev(_ project: String, _ service: ServiceID, _ total: Int) -> (TokenEvent, String?) {
+        (TokenEvent(service: service, timestamp: now.addingTimeInterval(-3600),
+                    model: "claude-opus", inputTokens: total, outputTokens: 0,
+                    cacheReadTokens: 0, cacheCreationTokens: 0, project: project), nil)
+    }
+    store.addEvents([
+        ev("alpha", .claude, 100),
+        ev("alpha", .codex, 50),
+        ev("beta", .claude, 300),
+        (TokenEvent(service: .claude, timestamp: now.addingTimeInterval(-3600),
+                    model: "claude-opus", inputTokens: 999, outputTokens: 0,
+                    cacheReadTokens: 0, cacheCreationTokens: 0, project: nil), nil),
+    ])
+    let result = store.projectServiceBreakdown(days: 7, now: now)
+    #expect(result.count == 2) // project nil 제외
+    #expect(result[0].project == "beta")   // total 내림차순
+    #expect(result[0].total == 300)
+    #expect(result[1].project == "alpha")
+    #expect(result[1].total == 150)
+    #expect(result[1].byService[.claude] == 100)
+    #expect(result[1].byService[.codex] == 50)
+}
+
 @MainActor @Test func sessionSummaryNilWhenNoEvents() {
     let now = ISO8601.date("2026-06-10T12:00:00Z")!
     let store = UsageStore()

@@ -32,3 +32,69 @@ private let usageJSON = """
     #expect(ClaudeCredentials.parse(Data(payload.utf8))?.accessToken == "tok-123")
     #expect(ClaudeCredentials.parse(Data("{}".utf8)) == nil)
 }
+
+@Test func parsesExpiresAtMilliseconds() throws {
+    let payload = #"{"claudeAiOauth":{"accessToken":"tok-123","expiresAt":1780000000000}}"#
+    let creds = try #require(ClaudeCredentials.parse(Data(payload.utf8)))
+    #expect(creds.expiresAt == Date(timeIntervalSince1970: 1780000000))
+}
+
+@Test func expiresAtNilWhenAbsent() throws {
+    let payload = #"{"claudeAiOauth":{"accessToken":"tok-123"}}"#
+    let creds = try #require(ClaudeCredentials.parse(Data(payload.utf8)))
+    #expect(creds.expiresAt == nil)
+}
+
+@MainActor
+@Test func tokenProviderCacheHitSkipsReader() {
+    var calls = 0
+    let now = Date(timeIntervalSince1970: 1_000_000)
+    let provider = ClaudeTokenProvider {
+        calls += 1
+        return ClaudeCredentials(accessToken: "tok", expiresAt: now.addingTimeInterval(3600))
+    }
+    #expect(provider.token(now: now) == "tok")
+    #expect(provider.token(now: now.addingTimeInterval(100)) == "tok")
+    #expect(calls == 1) // 캐시 적중 — reader 1회만
+}
+
+@MainActor
+@Test func tokenProviderRefetchesWhenExpiring() {
+    var calls = 0
+    let now = Date(timeIntervalSince1970: 1_000_000)
+    let provider = ClaudeTokenProvider {
+        calls += 1
+        return ClaudeCredentials(accessToken: "tok\(calls)", expiresAt: now.addingTimeInterval(30))
+    }
+    #expect(provider.token(now: now) == "tok1")
+    // 만료 임박(now+60s 이내)이므로 재조회
+    #expect(provider.token(now: now) == "tok2")
+    #expect(calls == 2)
+}
+
+@MainActor
+@Test func tokenProviderNilExpiryStaysCached() {
+    var calls = 0
+    let provider = ClaudeTokenProvider {
+        calls += 1
+        return ClaudeCredentials(accessToken: "tok", expiresAt: nil)
+    }
+    let now = Date(timeIntervalSince1970: 1_000_000)
+    #expect(provider.token(now: now) == "tok")
+    #expect(provider.token(now: now.addingTimeInterval(99999)) == "tok")
+    #expect(calls == 1)
+}
+
+@MainActor
+@Test func tokenProviderInvalidateForcesRefetch() {
+    var calls = 0
+    let provider = ClaudeTokenProvider {
+        calls += 1
+        return ClaudeCredentials(accessToken: "tok", expiresAt: nil)
+    }
+    let now = Date(timeIntervalSince1970: 1_000_000)
+    _ = provider.token(now: now)
+    provider.invalidate()
+    _ = provider.token(now: now)
+    #expect(calls == 2)
+}

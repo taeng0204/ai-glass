@@ -52,6 +52,16 @@ private let nonSessionMetaLine = """
     #expect(CodexLogParser.parseSessionMeta(line: "") == nil)
 }
 
+@Test func parseSessionMetaCwdEqualToHomeBecomesTilde() throws {
+    let prev = CodexLogParser.homeDirectoryOverride
+    defer { CodexLogParser.homeDirectoryOverride = prev }
+    CodexLogParser.homeDirectoryOverride = "/Users/bob"
+    let line = #"{"timestamp":"2026-06-10T14:00:00.000Z","type":"session_meta","payload":{"id":"s","cwd":"/Users/bob"}}"#
+    #expect(CodexLogParser.parseSessionMeta(line: line) == "~")
+    // 홈이 아니면 lastPathComponent
+    #expect(CodexLogParser.parseSessionMeta(line: sessionMetaLine) == "ai-glass")
+}
+
 // ─── ③ recentShare 비중 ────────────────────────────────────────────────────
 
 @MainActor @Test func recentShareReturnsProportions() {
