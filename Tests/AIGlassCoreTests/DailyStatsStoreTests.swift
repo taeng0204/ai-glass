@@ -102,6 +102,24 @@ private func tempDBPath() -> String {
     #expect(abs(cost - 30.0) < 1e-6)
 }
 
+@MainActor @Test func totalCostFromToExcludesOutOfRangeDays() {
+    let store = try! #require(DailyStatsStore(path: tempDBPath()))
+    // 같은 모델, 같은 비용($30씩)을 D1·D2·D3에 하루씩 적재.
+    func ev(_ iso: String) -> TokenEvent {
+        TokenEvent(service: .claude, timestamp: ISO8601.date(iso)!, model: "claude-opus-4-8",
+                   inputTokens: 1_000_000, outputTokens: 1_000_000,
+                   cacheReadTokens: 0, cacheCreationTokens: 0, project: "p")
+    }
+    store.upsert(events: [ev("2026-06-01T12:00:00Z"),
+                          ev("2026-06-02T12:00:00Z"),
+                          ev("2026-06-03T12:00:00Z")], calendar: .utc)
+    // [06-02, 06-03) → 06-02만 포함 = $30.
+    let from = ISO8601.date("2026-06-02T00:00:00Z")!
+    let to = ISO8601.date("2026-06-03T00:00:00Z")!
+    let cost = store.totalCost(from: from, to: to, calendar: .utc)
+    #expect(abs(cost - 30.0) < 1e-6)
+}
+
 // MARK: - percent_snapshots
 
 @MainActor @Test func percentSnapshotRoundTripAndReplace() {

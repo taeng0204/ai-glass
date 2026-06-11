@@ -75,6 +75,7 @@ final class AppSettings {
         static let funStreak = "aiglass.funStreak"
         static let funWeeklyReport = "aiglass.funWeeklyReport"
         static let funSoundEnabled = "aiglass.funSoundEnabled"
+        static let onboardingCompleted = "aiglass.onboardingCompleted"
     }
 
     var warnThreshold: Double {
@@ -140,6 +141,10 @@ final class AppSettings {
     var funSoundEnabled: Bool {
         didSet { defaults.set(funSoundEnabled, forKey: Key.funSoundEnabled) }
     }
+    /// 첫 실행 온보딩 완료 여부. false면 앱 시작 시 온보딩 위저드 표시. 기본 false.
+    var onboardingCompleted: Bool {
+        didSet { defaults.set(onboardingCompleted, forKey: Key.onboardingCompleted) }
+    }
 
     init() {
         warnThreshold = defaults.object(forKey: Key.warnThreshold) as? Double ?? 70
@@ -159,6 +164,7 @@ final class AppSettings {
         funStreak = defaults.object(forKey: Key.funStreak) as? Bool ?? true
         funWeeklyReport = defaults.object(forKey: Key.funWeeklyReport) as? Bool ?? true
         funSoundEnabled = defaults.object(forKey: Key.funSoundEnabled) as? Bool ?? false
+        onboardingCompleted = defaults.object(forKey: Key.onboardingCompleted) as? Bool ?? false
         let raw = defaults.stringArray(forKey: Key.enabledServices) ?? []
         let parsed = Set(raw.compactMap(ServiceID.init(rawValue:)))
         enabledServices = parsed.isEmpty ? Set(ServiceID.allCases) : parsed

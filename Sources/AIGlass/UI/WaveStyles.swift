@@ -30,6 +30,68 @@ extension WaveStyle {
 }
 
 extension WaveInput {
+    /// 온보딩/설정 프리뷰용 데모 입력 (store 의존 없음).
+    /// share: 3색 모두 보이도록 claude 0.45 / codex 0.35 / gemini 0.20,
+    /// activityLevel 0.5, percent 49%. `t`만 TimelineView가 주입 — 나머지는 고정.
+    static func demo(t: Double) -> WaveInput {
+        let level = 0.5
+        return WaveInput(
+            t: t,
+            level: level,
+            amplitude: 0.15 + 0.85 * level,
+            share: [.claude: 0.45, .codex: 0.35, .gemini: 0.20],
+            current: .claude,
+            percent: 49)
+    }
+}
+
+/// store 없이 스타일 하나를 라이브 렌더하는 프리뷰 래퍼 (온보딩·설정 재사용).
+/// 알약 외형(글래스 캡슐)까지 포함해 실제 HUD와 동일한 느낌을 준다.
+struct WaveStylePreview: View {
+    let style: WaveStyle
+    /// 캡슐 외형(글래스 배경)을 그릴지. false면 웨이브만.
+    var chrome: Bool = true
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            let input = WaveInput.demo(t: t)
+            let content = HStack(spacing: 6) {
+                waveView(input)
+                    .frame(width: style.areaWidth, height: waveHeight)
+                Circle()
+                    .fill(Theme.color(for: .claude))
+                    .frame(width: 5, height: 5)
+                Text("49%")
+                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                    .foregroundStyle(Theme.statusColor(percent: 49))
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 6)
+
+            if chrome {
+                content
+                    .background(.regularMaterial, in: Capsule())
+                    .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
+            } else {
+                content
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func waveView(_ input: WaveInput) -> some View {
+        switch style {
+        case .pulseBars: PulseBarsWave(input: input)
+        case .smoothWave: SmoothWave(input: input)
+        case .waterFill: WaterFillWave(input: input)
+        case .orbGlow: OrbGlowWave(input: input)
+        case .heartbeat: HeartbeatWave(input: input)
+        }
+    }
+}
+
+extension WaveInput {
     /// share 비례 누적 위치에 서비스 색을 배치한 가로 그라데이션.
     /// 활동 없으면 보라-파랑. (WavePill의 기존 로직과 동일 의미.)
     var gradient: LinearGradient {
@@ -55,6 +117,29 @@ extension WaveInput {
             cursor = end
         }
         return LinearGradient(stops: stops, startPoint: .leading, endPoint: .trailing)
+    }
+
+    /// orbGlow용 각도 그라데이션 — share 비례 호로 서비스 색을 배치(끝색=첫색으로 닫음).
+    /// 활동 없으면 보라-파랑.
+    var orbGradient: AngularGradient {
+        let active = ServiceID.allCases.compactMap { svc -> (ServiceID, Double)? in
+            guard let s = share[svc], s > 0 else { return nil }
+            return (svc, s)
+        }
+        guard !active.isEmpty else {
+            return AngularGradient(colors: [.purple, .blue, .purple], center: .center)
+        }
+        var stops: [Gradient.Stop] = []
+        var cursor = 0.0
+        for (svc, frac) in active {
+            let c = Theme.color(for: svc)
+            stops.append(.init(color: c, location: cursor))
+            cursor += frac
+            stops.append(.init(color: c, location: min(1.0, cursor)))
+        }
+        // 원형으로 닫히도록 첫 색을 끝에 한 번 더.
+        if let first = active.first { stops.append(.init(color: Theme.color(for: first.0), location: 1.0)) }
+        return AngularGradient(gradient: Gradient(stops: stops), center: .center)
     }
 
     /// share 가중 혼합색 (orbGlow/waterFill 단색용). 활동 없으면 보라.
@@ -132,12 +217,14 @@ struct WaterFillWave: View {
             let waterTop = size.height * (1 - level)
             // 찰랑임 진폭 = burn(level)에 반응. idle도 미세하게.
             let amp = 0.6 + 2.4 * input.level
-            let baseColor = input.mixedColor
-            // 2겹: 뒤(느린·연한) + 앞(빠른·진한).
+            // 층 색 = 활동 서비스 가로 그라데이션(share 비례 구간) — 단색 평균은
+            // 보색이 섞이면 회색이 되어 "무색"으로 보인다. 그라데이션이라야 3색이 산다.
+            let grad = input.gGradient
+            // 2겹: 뒤(느린·연한) + 앞(빠른·진한). 불투명도는 ctx.opacity로.
             drawWaveLayer(&ctx, size: size, top: waterTop, amp: amp * 0.7,
-                          speed: 1.4, phaseShift: 0, color: baseColor.opacity(0.35))
+                          speed: 1.4, phaseShift: 0, gradient: grad, opacity: 0.4)
             drawWaveLayer(&ctx, size: size, top: waterTop, amp: amp,
-                          speed: 2.3, phaseShift: 1.7, color: baseColor.opacity(0.7))
+                          speed: 2.3, phaseShift: 1.7, gradient: grad, opacity: 0.75)
         }
         .frame(width: waveWidth, height: waveHeight)
         .clipShape(RoundedRectangle(cornerRadius: 4))
@@ -145,7 +232,8 @@ struct WaterFillWave: View {
     }
 
     private func drawWaveLayer(_ ctx: inout GraphicsContext, size: CGSize, top: CGFloat,
-                               amp: CGFloat, speed: Double, phaseShift: Double, color: Color) {
+                               amp: CGFloat, speed: Double, phaseShift: Double,
+                               gradient: Gradient, opacity: Double) {
         var path = Path()
         let steps = 40
         path.move(to: CGPoint(x: 0, y: size.height))
@@ -157,7 +245,11 @@ struct WaterFillWave: View {
         }
         path.addLine(to: CGPoint(x: size.width, y: size.height))
         path.closeSubpath()
-        ctx.fill(path, with: .color(color))
+        var layer = ctx
+        layer.opacity = opacity
+        layer.fill(path, with: .linearGradient(gradient,
+                                               startPoint: .zero,
+                                               endPoint: CGPoint(x: size.width, y: 0)))
     }
 }
 
@@ -170,16 +262,25 @@ struct OrbGlowWave: View {
         let pulse = 0.5 + 0.5 * sin(input.t * 1.8)
         let depth = 0.10 + 0.12 * input.level
         let scale = (1.0 - depth) + depth * pulse
-        let color = input.mixedColor
+        // 단색 평균(mixedColor)은 보색 섞이면 회색 → "무색". share 가중 각도 그라데이션으로
+        // 여러 서비스 색이 구슬에 함께 비치게 한다. glow는 대표(평균)색으로 은은히.
+        let grad = input.orbGradient
+        let glowColor = input.mixedColor
         ZStack {
             Circle()
-                .fill(color.opacity(0.25))
+                .fill(glowColor.opacity(0.25))
                 .blur(radius: 4)
                 .scaleEffect(scale * 1.25)
             Circle()
-                .fill(RadialGradient(colors: [color, color.opacity(0.5)],
-                                     center: .center, startRadius: 0, endRadius: 8))
+                .fill(grad)
                 .scaleEffect(scale)
+                .overlay(
+                    Circle()
+                        .fill(RadialGradient(colors: [.white.opacity(0.35), .clear],
+                                             center: .init(x: 0.35, y: 0.32),
+                                             startRadius: 0, endRadius: 9))
+                        .scaleEffect(scale)
+                )
         }
         // 구슬 하나는 36pt가 과해 알약이 비어 보임 — 오브만 20pt로 축소.
         .frame(width: WaveStyle.orbGlow.areaWidth, height: waveHeight)

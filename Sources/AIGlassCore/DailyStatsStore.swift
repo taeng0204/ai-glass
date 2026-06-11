@@ -207,6 +207,37 @@ public final class DailyStatsStore {
         return total
     }
 
+    /// 명시적 일 범위 `[from, to)`(UTC day 기준, from 포함·to 제외)의 추정 비용 합계(USD).
+    /// `totalCost(days:)`가 "최근 N일"만 지원해 주간 리포트의 지난주 [D-7, D-1] 비용을
+    /// 정확히 못 구하던 문제를 해결한다(전전주 비용이 섞였음).
+    public func totalCost(from: Date, to: Date, calendar: Calendar = .current) -> Double {
+        let fromStr = Self.dayFormatter.string(from: from)
+        let toStr = Self.dayFormatter.string(from: to)
+        let sql = """
+        SELECT model, SUM(input), SUM(output), SUM(cache_read), SUM(cache_create)
+        FROM daily_stats WHERE day >= ? AND day < ?
+        GROUP BY model
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, fromStr, -1, Self.SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, toStr, -1, Self.SQLITE_TRANSIENT)
+
+        var total = 0.0
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let modelC = sqlite3_column_text(stmt, 0) else { continue }
+            let model = String(cString: modelC)
+            let synth = TokenEvent(service: .claude, timestamp: from, model: model,
+                                   inputTokens: Int(sqlite3_column_int64(stmt, 1)),
+                                   outputTokens: Int(sqlite3_column_int64(stmt, 2)),
+                                   cacheReadTokens: Int(sqlite3_column_int64(stmt, 3)),
+                                   cacheCreationTokens: Int(sqlite3_column_int64(stmt, 4)))
+            total += CostEstimator.cost(of: synth)
+        }
+        return total
+    }
+
     // MARK: - 신기록 / 스트릭 (재미 로직)
 
     /// 일별 토큰 합(4컬럼 합)의 **최댓값**을 반환한다. `excludingDay`에 해당하는 날(UTC)은 제외.
