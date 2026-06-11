@@ -25,10 +25,11 @@ public struct ClaudeCredentials {
     }
 
     /// macOS Keychain에서 Claude Code OAuth 자격증명 읽기.
-    public static func fromKeychain() -> ClaudeCredentials? {
+    public static func fromKeychain(allowSecurityToolFallback: Bool = false) -> ClaudeCredentials? {
         if let data = readKeychainDataWithoutPrompt() {
             return parse(data)
         }
+        guard allowSecurityToolFallback else { return nil }
         if let data = readKeychainDataWithSecurityTool() {
             return parse(data)
         }
@@ -45,6 +46,7 @@ public struct ClaudeCredentials {
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecUseAuthenticationContext as String: context,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
         ]
         var result: AnyObject?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,

@@ -87,6 +87,18 @@ private func makeStore(now: Date) -> UsageStore {
     #expect(store.todayRequests(now: now, calendar: .utc) == 3)
 }
 
+@MainActor @Test func recentActivityShareIncludesGeminiRequests() {
+    let now = ISO8601.date("2026-06-10T12:00:00Z")!
+    let store = UsageStore()
+    store.setGeminiRequests([
+        now.addingTimeInterval(-60),
+        now.addingTimeInterval(-3600),
+    ])
+    let share = store.recentActivityShare(windowMinutes: 3, now: now)
+    #expect(share[.gemini] == 1.0)
+    #expect(abs(store.requestActivityLevel(windowMinutes: 3, now: now) - 1.0 / 3.0) < 0.001)
+}
+
 @MainActor @Test func sessionSummaryFormatsTokensProjectCost() {
     let now = ISO8601.date("2026-06-10T12:00:00Z")!
     let store = UsageStore()

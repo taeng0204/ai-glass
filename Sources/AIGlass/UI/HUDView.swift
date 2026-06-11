@@ -231,7 +231,7 @@ struct WavePill: View {
 
     /// enabled 서비스만 남긴 recent share (합 1.0 재정규화).
     private func filteredShare(now: Date) -> [ServiceID: Double] {
-        let full = store.recentShare(now: now).filter { enabled.contains($0.key) }
+        let full = store.recentActivityShare(now: now).filter { enabled.contains($0.key) }
         let grand = full.values.reduce(0, +)
         guard grand > 0 else { return [:] }
         return full.mapValues { $0 / grand }
@@ -240,7 +240,8 @@ struct WavePill: View {
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
-            let level = store.activityLevel(now: context.date) // 0...1
+            let level = max(store.activityLevel(now: context.date),
+                            store.requestActivityLevel(now: context.date)) // 0...1
             let amplitude = 0.15 + 0.85 * level               // idle에도 잔물결
             let share = filteredShare(now: context.date)
             let services = rotationServices

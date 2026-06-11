@@ -65,7 +65,7 @@ curl -fsSL https://raw.githubusercontent.com/taeng0204/ai-glass/main/install.sh 
 
 ```bash
 git clone https://github.com/taeng0204/ai-glass.git && cd ai-glass
-swift test                 # 단위 테스트 (136개)
+swift test                 # 단위 테스트 (140개)
 swift run AIGlass          # 개발 실행 (자동시작·알림은 .app 번들 전용)
 bash Scripts/make-app.sh   # .app 번들 생성 → build/AIGlass.app
 swift run AIGlass --check-claude   # Claude 한도 API 연결 진단

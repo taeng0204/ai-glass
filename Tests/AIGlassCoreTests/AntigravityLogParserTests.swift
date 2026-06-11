@@ -70,3 +70,19 @@ import Testing
     #expect(comps.minute == 20)
     #expect(comps.second == 50)
 }
+
+@Test func antigravityRollsYearWhenLogCrossesYearBoundary() {
+    // 12월에 생성된 파일이 해를 넘겨 1월 로그를 기록하면 연도를 +1 보정한다.
+    let log = """
+    I1231 23:59:50.000000 1 http_helpers.go:183] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse Trace: 0x1
+    I0101 00:00:05.000000 1 http_helpers.go:183] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse Trace: 0x2
+    """
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+    let dates = AntigravityLogParser.modelRequestDates(logData: Data(log.utf8),
+                                                       year: 2025, fileStartMonth: 12,
+                                                       calendar: calendar)
+    #expect(dates.count == 2)
+    #expect(calendar.component(.year, from: dates[0]) == 2025) // 12-31
+    #expect(calendar.component(.year, from: dates[1]) == 2026) // 01-01 → 다음 해
+}

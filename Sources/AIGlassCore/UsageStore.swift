@@ -11,6 +11,10 @@ public final class UsageStore {
     private var dedupKeys: Set<String> = []
     /// 분 단위 토큰 합계 캐시 (key = epoch초 / 60). burn rate 계산용. 서비스별로 분리.
     private var minuteBuckets: [ServiceID: [Int: Int]] = [:]
+    /// 분 단위 요청 수 캐시. HUD 오브/웨이브의 최근 활동 비중 계산용.
+    private var requestBuckets: [ServiceID: [Int: Int]] = [:]
+    /// Antigravity는 토큰 이벤트가 없어 별도 요청 시각으로 activity를 반영한다.
+    private var geminiRequestBuckets: [Int: Int] = [:]
     /// 서비스별 가장 최근 이벤트 timestamp 캐시 — approxFullReset이 events 전체 스캔 없이 사용 (30fps 호출 대비).
     private var lastEventTimestamp: [ServiceID: Date] = [:]
 
@@ -78,6 +82,7 @@ public final class UsageStore {
             events.append(event)
             let minute = Int(event.timestamp.timeIntervalSince1970) / 60
             minuteBuckets[event.service, default: [:]][minute, default: 0] += event.totalTokens
+            requestBuckets[event.service, default: [:]][minute, default: 0] += 1
             // 서비스별 최신 timestamp 캐시 갱신 (approxFullReset용)
             if let prev = lastEventTimestamp[event.service] {
                 if event.timestamp > prev { lastEventTimestamp[event.service] = event.timestamp }
@@ -96,6 +101,9 @@ public final class UsageStore {
                 let cutoffMinute = Int(newest.timeIntervalSince1970) / 60 - 48 * 60
                 for svc in minuteBuckets.keys {
                     minuteBuckets[svc] = minuteBuckets[svc]!.filter { $0.key > cutoffMinute }
+                }
+                for svc in requestBuckets.keys {
+                    requestBuckets[svc] = requestBuckets[svc]!.filter { $0.key > cutoffMinute }
                 }
             }
 
@@ -127,6 +135,12 @@ public final class UsageStore {
 
     public func setGeminiRequests(_ dates: [Date]) {
         geminiRequestDates = dates
+        var buckets: [Int: Int] = [:]
+        for date in dates {
+            let minute = Int(date.timeIntervalSince1970) / 60
+            buckets[minute, default: 0] += 1
+        }
+        geminiRequestBuckets = buckets
     }
 
     public var maxUsedPercent: Double {
@@ -212,6 +226,37 @@ public final class UsageStore {
         let grand = totals.values.reduce(0, +)
         guard grand > 0 else { return [:] }
         return totals.mapValues { Double($0) / Double(grand) }
+    }
+
+    /// 최근 windowMinutes 내 서비스별 요청 activity 비중. Antigravity처럼 토큰이 없는 CLI도 HUD에 반영한다.
+    public func recentActivityShare(windowMinutes: Int = 3, now: Date) -> [ServiceID: Double] {
+        let totals = recentRequestTotals(windowMinutes: windowMinutes, now: now)
+        let grand = totals.values.reduce(0, +)
+        guard grand > 0 else { return [:] }
+        return totals.mapValues { Double($0) / Double(grand) }
+    }
+
+    /// 최근 요청 수 기반 HUD 진폭 보정. 3분 창 기준 분당 1건이면 꽤 뚜렷하게 반응한다.
+    public func requestActivityLevel(windowMinutes: Int = 3, now: Date) -> Double {
+        let count = recentRequestTotals(windowMinutes: windowMinutes, now: now).values.reduce(0, +)
+        guard windowMinutes > 0, count > 0 else { return 0 }
+        return min(1.0, Double(count) / Double(windowMinutes))
+    }
+
+    private func recentRequestTotals(windowMinutes: Int, now: Date) -> [ServiceID: Int] {
+        guard windowMinutes > 0 else { return [:] }
+        let nowMinute = Int(now.timeIntervalSince1970) / 60
+        let range = (nowMinute - windowMinutes + 1)...nowMinute
+        var totals: [ServiceID: Int] = [:]
+        for (svc, buckets) in requestBuckets {
+            var count = 0
+            for minute in range { count += buckets[minute] ?? 0 }
+            if count > 0 { totals[svc, default: 0] += count }
+        }
+        var geminiCount = 0
+        for minute in range { geminiCount += geminiRequestBuckets[minute] ?? 0 }
+        if geminiCount > 0 { totals[.gemini, default: 0] += geminiCount }
+        return totals
     }
 
     /// project별 토큰 합계 (내림차순). project == nil 이벤트는 제외.

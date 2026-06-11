@@ -137,17 +137,22 @@ public final class GeminiCollector {
     private func antigravityModelRequestDates() -> [Date] {
         var dates: [Date] = []
         for file in LogLocator.recentFiles(under: logDir, suffix: ".log", modifiedWithinDays: 8) {
-            guard let year = Self.year(fromLogFilename: file.lastPathComponent),
+            guard let (year, month) = Self.yearMonth(fromLogFilename: file.lastPathComponent),
                   let data = try? Data(contentsOf: file) else { continue }
-            dates.append(contentsOf: AntigravityLogParser.modelRequestDates(logData: data, year: year))
+            dates.append(contentsOf: AntigravityLogParser.modelRequestDates(
+                logData: data, year: year, fileStartMonth: month))
         }
         return dates
     }
 
-    private static func year(fromLogFilename filename: String) -> Int? {
+    /// `cli-YYYYMMDD_HHMMSS.log`에서 생성 연·월을 추출. 월은 해 넘김 보정에 쓴다.
+    private static func yearMonth(fromLogFilename filename: String) -> (year: Int, month: Int)? {
         guard filename.hasPrefix("cli-"), filename.count >= 12 else { return nil }
-        let start = filename.index(filename.startIndex, offsetBy: 4)
-        let end = filename.index(start, offsetBy: 4)
-        return Int(filename[start..<end])
+        let yStart = filename.index(filename.startIndex, offsetBy: 4)
+        let yEnd = filename.index(yStart, offsetBy: 4)
+        let mEnd = filename.index(yEnd, offsetBy: 2)
+        guard let year = Int(filename[yStart..<yEnd]),
+              let month = Int(filename[yEnd..<mEnd]) else { return nil }
+        return (year, month)
     }
 }
