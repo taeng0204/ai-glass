@@ -236,6 +236,7 @@ struct EventCard: View {
     private var icon: String {
         switch event.kind {
         case .limitThreshold: return "exclamationmark.triangle.fill"
+        case .depletionRisk: return "hourglass.bottomhalf.filled"
         case .windowReset: return "sparkles"
         case .burnSpike: return "flame.fill"
         }
@@ -243,6 +244,7 @@ struct EventCard: View {
     private var iconColor: Color {
         switch event.kind {
         case .limitThreshold: return .orange
+        case .depletionRisk: return .orange
         case .windowReset: return .green
         case .burnSpike: return .pink
         }
