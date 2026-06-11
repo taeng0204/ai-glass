@@ -25,6 +25,20 @@ private let codexLineNullInfo = """
     #expect(p.limits.contains { $0.kind == .weekly && $0.usedPercent == 12.0 })
 }
 
+/// 최신 Codex CLI 스키마: resets_in_seconds 대신 절대 epoch 초 `resets_at`.
+private let codexLineResetsAtEpoch = """
+{"timestamp":"2026-06-11T12:02:33.568Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":"codex","limit_name":null,"primary":{"used_percent":1.0,"window_minutes":300,"resets_at":1781196928},"secondary":{"used_percent":1.0,"window_minutes":10080,"resets_at":1781765689},"credits":{"has_credits":false,"unlimited":false,"balance":"0"},"plan_type":"pro"}}}
+"""
+
+@Test func parsesResetsAtEpochSchema() throws {
+    let parsed = try #require(CodexLogParser.parse(line: codexLineResetsAtEpoch))
+    #expect(parsed.limits.count == 2)
+    let session = try #require(parsed.limits.first { $0.kind == .session5h })
+    #expect(session.resetsAt == Date(timeIntervalSince1970: 1_781_196_928))
+    let weekly = try #require(parsed.limits.first { $0.kind == .weekly })
+    #expect(weekly.resetsAt == Date(timeIntervalSince1970: 1_781_765_689))
+}
+
 @Test func parsesTokenCountWithNullInfo() throws {
     let parsed = try #require(CodexLogParser.parse(line: codexLineNullInfo))
     #expect(parsed.event == nil)

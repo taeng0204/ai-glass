@@ -42,8 +42,14 @@ public enum CodexLogParser {
             func window(_ key: String, kind: LimitWindow.Kind) -> LimitWindow? {
                 guard let w = rateLimits[key] as? [String: Any],
                       let used = (w["used_percent"] as? NSNumber)?.doubleValue else { return nil }
-                let resets = (w["resets_in_seconds"] as? NSNumber).map {
-                    timestamp.addingTimeInterval($0.doubleValue)
+                // 최신 Codex CLI는 절대 epoch 초 `resets_at`, 구버전은 상대 `resets_in_seconds`.
+                let resets: Date?
+                if let epoch = w["resets_at"] as? NSNumber {
+                    resets = Date(timeIntervalSince1970: epoch.doubleValue)
+                } else if let inSeconds = w["resets_in_seconds"] as? NSNumber {
+                    resets = timestamp.addingTimeInterval(inSeconds.doubleValue)
+                } else {
+                    resets = nil
                 }
                 return LimitWindow(kind: kind, usedPercent: used, resetsAt: resets)
             }
