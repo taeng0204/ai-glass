@@ -439,8 +439,16 @@ private struct TrendsTab: View {
         .chartXScale(domain: xDomain)
         .chartYScale(domain: 0...maxY)
         .chartXAxis {
-            AxisMarks(values: .stride(by: .day)) {
-                AxisValueLabel(format: .dateTime.day(), centered: true)
+            // 30일은 일 단위 라벨이 겹치므로 주(7일) 간격으로만 표기.
+            if range == .month {
+                AxisMarks(values: .stride(by: .day, count: 7)) {
+                    AxisValueLabel(format: .dateTime.month(.defaultDigits).day(), centered: false)
+                    AxisGridLine()
+                }
+            } else {
+                AxisMarks(values: .stride(by: .day)) {
+                    AxisValueLabel(format: .dateTime.day(), centered: true)
+                }
             }
         }
         .chartLegend(position: .bottom)
