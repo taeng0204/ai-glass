@@ -58,16 +58,20 @@ public enum DepletionEstimator {
 
     /// 일 단위 소모율(%/day) 추정 — 주간 윈도우용.
     ///
-    /// 연속 일 페어의 (다음날% - 전날%) 중 **양수만** 평균한다.
-    /// 리셋을 걸쳐 음수가 되는 페어는 제외하고, 양수 페어가 1개 미만이면 nil.
+    /// 인접 스냅샷 페어의 delta를 실제 일수(dayDiff)로 나눠 %/day를 구한다.
+    /// 이렇게 하면 스냅샷 사이 간격이 1일·2일·5일처럼 불균등해도 왜곡 없이 정규화된다.
+    /// 리셋을 걸쳐 음수가 되는 페어(delta ≤ 0)나 dayDiff < 0.5인 페어는 제외.
+    /// 양수 비율 페어가 1개 미만이면 nil.
     /// `snapshots`는 (day, percent) 쌍 — 호출자가 일 오름차순으로 넘기지 않아도 내부 정렬.
     public static func weeklyDailyRate(snapshots: [(day: Date, percent: Double)]) -> Double? {
         guard snapshots.count >= 2 else { return nil }
         let sorted = snapshots.sorted { $0.day < $1.day }
         var positives: [Double] = []
         for i in 1..<sorted.count {
+            let dayDiff = sorted[i].day.timeIntervalSince(sorted[i - 1].day) / 86400
+            guard dayDiff >= 0.5 else { continue }
             let delta = sorted[i].percent - sorted[i - 1].percent
-            if delta > 0 { positives.append(delta) }
+            if delta > 0 { positives.append(delta / dayDiff) }
         }
         guard positives.count >= 1 else { return nil }
         return positives.reduce(0, +) / Double(positives.count)

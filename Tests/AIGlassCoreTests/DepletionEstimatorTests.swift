@@ -150,3 +150,19 @@ import Testing
     // rate 0.3%/day는 노이즈 → nil
     #expect(DepletionEstimator.weeklyDepletion(current: 60, rate: 0.3, resetsAt: nil, now: now) == nil)
 }
+
+@Test func weeklyDailyRateNormalizesGapPairs() {
+    let day0 = ISO8601.date("2026-06-01T00:00:00Z")!
+    // day0(0%) → day3(+15%) : 3일 간격 → 5%/day
+    // day3(15%) → day4(-10%) : 리셋으로 음수 → 제외
+    // day4(5%) → day5(+5%) : 1일 간격 → 5%/day
+    // 양수 페어 평균 = 5%/day
+    let snaps: [(day: Date, percent: Double)] = [
+        (day0, 0),
+        (day0.addingTimeInterval(3 * 86400), 15),
+        (day0.addingTimeInterval(4 * 86400), 5),
+        (day0.addingTimeInterval(5 * 86400), 10),
+    ]
+    let rate = try! #require(DepletionEstimator.weeklyDailyRate(snapshots: snaps))
+    #expect(abs(rate - 5.0) < 1e-9)
+}

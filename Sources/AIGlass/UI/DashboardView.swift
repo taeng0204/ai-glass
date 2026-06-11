@@ -338,8 +338,9 @@ private struct TrendsTab: View {
     var statsStore: DailyStatsStore? = nil
     let settings: AppSettings
     @State private var range: Range = .week
-    /// onAppear 시 false→true로 바뀌며 막대가 0→값으로 자란다. 탭 재진입마다 재생.
-    @State private var grow = false
+    /// 0.0→1.0으로 증가하며 BarMark y값에만 곱해진다.
+    /// 축/눈금/레이아웃은 최종 데이터로 고정되어 움직이지 않는다.
+    @State private var growFactor: Double = 0
 
     enum Range: String, CaseIterable, Identifiable {
         case week = "7일", month = "30일"
@@ -371,6 +372,23 @@ private struct TrendsTab: View {
         return rows.filter { settings.enabledServices.contains($0.service) }
     }
 
+    /// 일별 서비스 합산 최댓값 (y축 도메인 고정용).
+    private var maxDailyStack: Double {
+        let byDay = Dictionary(grouping: rawData, by: { $0.day })
+        let maxStack = byDay.values.map { $0.reduce(0) { $0 + $1.tokens } }.max() ?? 0
+        return Double(max(1, maxStack))
+    }
+
+    /// 전체 날짜 범위 (x축 도메인 고정: 오늘 기준 days일 전 ~ 오늘).
+    private var xDomain: ClosedRange<Date> {
+        let now = Date()
+        let start = Calendar.current.startOfDay(for: now)
+            .addingTimeInterval(-Double(range.days - 1) * 86400)
+        let end = Calendar.current.startOfDay(for: now)
+            .addingTimeInterval(86400)
+        return start...end
+    }
+
     var body: some View {
         VStack(spacing: 8) {
             if statsStore != nil {
@@ -380,26 +398,33 @@ private struct TrendsTab: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .controlSize(.small)
+                .onChange(of: range) { _, _ in startGrow() }
             }
             chart
         }
-        .onAppear {
-            grow = false
-            withAnimation(.spring(duration: 0.8)) { grow = true }
-        }
+        .onAppear { startGrow() }
+    }
+
+    private func startGrow() {
+        growFactor = 0
+        withAnimation(.spring(duration: 0.8)) { growFactor = 1 }
     }
 
     private var chart: some View {
         let data = rawData.map { Point(day: $0.day, service: $0.service, tokens: $0.tokens) }
         let services = enabled
+        let maxY = maxDailyStack * 1.05
+        let factor = growFactor
         return Chart(data) { item in
             BarMark(x: .value("날짜", item.day, unit: .day),
-                    y: .value("토큰", grow ? item.tokens : 0))
+                    y: .value("토큰", Double(item.tokens) * factor))
                 .foregroundStyle(by: .value("서비스", item.service.displayName))
                 .cornerRadius(3)
         }
         .chartForegroundStyleScale(domain: services.map(\.displayName),
                                    range: services.map { Theme.color(for: $0) })
+        .chartXScale(domain: xDomain)
+        .chartYScale(domain: 0...maxY)
         .chartXAxis {
             AxisMarks(values: .stride(by: .day)) {
                 AxisValueLabel(format: .dateTime.day(), centered: true)
