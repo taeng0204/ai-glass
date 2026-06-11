@@ -19,6 +19,8 @@ final class DashboardPanelController {
 
     private var globalMonitor: Any?
     private var localMonitor: Any?
+    /// 패널이 열릴 때마다 +1 → DashboardView가 `.id`로 콘텐츠 재생성(첫 진입 애니메이션 재생).
+    private let openToken = OpenToken()
 
     init(store: UsageStore,
          statsStore: DailyStatsStore?,
@@ -49,7 +51,8 @@ final class DashboardPanelController {
                                  eventLog: eventLog,
                                  onSettings: onSettings,
                                  onReplay: onReplay,
-                                 onResize: { [weak self] in self?.resizeToFit() })
+                                 onResize: { [weak self] in self?.resizeToFit() },
+                                 openToken: openToken)
             .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22))
             .padding(8)
             .fixedSize()
@@ -96,6 +99,10 @@ final class DashboardPanelController {
 
     private func open(relativeTo button: NSStatusBarButton) {
         onRefresh()
+
+        // 콘텐츠 재생성 → onAppear 애니메이션이 패널 표시 후 처음부터 재생.
+        // (게이지 폭은 0→값이라 fittingSize 높이엔 영향 없음 → 사이징 전에 올려도 안전.)
+        openToken.count += 1
 
         // 콘텐츠 크기에 맞게 패널 크기 확정.
         panel.layoutIfNeeded()

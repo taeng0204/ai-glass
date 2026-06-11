@@ -99,6 +99,7 @@ extension HUDEvent.Kind {
         case .depletionRisk: return "hourglass.bottomhalf.filled"
         case .windowReset: return "sparkles"
         case .burnSpike: return "flame.fill"
+        case .comeback: return "figure.wave"
         case .briefing(let period):
             switch period {
             case .morning: return "sun.max.fill"
@@ -113,6 +114,7 @@ extension HUDEvent.Kind {
         case .depletionRisk: return .orange
         case .windowReset: return .green
         case .burnSpike: return .pink
+        case .comeback: return .cyan
         case .briefing(let period):
             switch period {
             case .morning: return .yellow
@@ -157,7 +159,9 @@ struct HUDView: View {
                           warn: settings.warnThreshold, crit: settings.critThreshold, onTap: tapped)
             } else {
                 WavePill(store: store, enabled: enabled,
-                         warn: settings.warnThreshold, crit: settings.critThreshold)
+                         warn: settings.warnThreshold, crit: settings.critThreshold,
+                         showsPercent: settings.hudShowsPercent,
+                         showsCountdown: settings.hudShowsCountdown)
                     .contentShape(RoundedRectangle(cornerRadius: 22))
                     .onTapGesture { tapped() }
             }
@@ -176,17 +180,38 @@ struct WavePill: View {
     var enabled: Set<ServiceID> = Set(ServiceID.allCases)
     var warn: Double = 70
     var crit: Double = 90
+    /// 사용률 % 표시 여부 (설정 hudShowsPercent).
+    var showsPercent: Bool = true
+    /// 리셋 카운트다운(작은 회색) 표시 여부 (설정 hudShowsCountdown).
+    var showsCountdown: Bool = true
 
     /// limits가 있고 enabled인 서비스 — claude, codex, gemini 고정 순.
     private var rotationServices: [ServiceID] {
         ServiceID.allCases.filter { enabled.contains($0) && !(store.limits[$0]?.isEmpty ?? true) }
     }
 
+    /// 서비스의 표시 윈도우: session5h 우선, 없으면 최댓값 윈도우.
+    private func displayWindow(_ service: ServiceID) -> LimitWindow? {
+        guard let windows = store.limits[service], !windows.isEmpty else { return nil }
+        if let s5h = windows.first(where: { $0.kind == .session5h }) { return s5h }
+        return windows.max { $0.usedPercent < $1.usedPercent }
+    }
+
     /// 서비스의 표시 %: session5h 윈도우 우선, 없으면 최댓값 윈도우.
     private func displayPercent(_ service: ServiceID) -> Double {
-        guard let windows = store.limits[service], !windows.isEmpty else { return 0 }
-        if let s5h = windows.first(where: { $0.kind == .session5h }) { return s5h.usedPercent }
-        return windows.map(\.usedPercent).max() ?? 0
+        displayWindow(service)?.usedPercent ?? 0
+    }
+
+    /// 표시 윈도우의 리셋 카운트다운. resetsAt 있으면 정확, 없으면 approxFullReset("~"), 둘 다 없으면 nil.
+    private func resetCountdown(_ service: ServiceID, now: Date) -> String? {
+        guard let window = displayWindow(service) else { return nil }
+        if let resets = window.resetsAt {
+            return EventEngine.countdown(to: resets, from: now)
+        }
+        if let approx = store.approxFullReset(service: service, kind: window.kind, now: now) {
+            return "~" + EventEngine.countdown(to: approx, from: now)
+        }
+        return nil
     }
 
     /// enabled 서비스 중 최대 사용률 (글로우/대체 % 표기용).
@@ -221,26 +246,37 @@ struct WavePill: View {
             let glow = 0.5 + 0.5 * sin(t * (2 * .pi / 2.0)) // 0...1, 2초 주기
             let glowRadius = critical ? 6 + 8 * glow : 0
 
+            let countdown = (showsCountdown && current != nil)
+                ? resetCountdown(current!, now: context.date) : nil
+
             HStack(spacing: 8) {
                 waveBars(t: t, amplitude: amplitude, share: share)
                     .frame(height: 16)
-                // 점+% 묶음: 로테이션(index) 변화 시 위↔아래 슬라이드 전환.
+                // 점+%+카운트다운 묶음: 로테이션(index) 변화 시 위↔아래 슬라이드 전환.
                 HStack(spacing: 4) {
                     if let current {
                         Circle()
                             .fill(Theme.color(for: current))
                             .frame(width: 6, height: 6)
                     }
-                    Text("\(Int(percent))%")
-                        .font(.system(size: 11, weight: .bold).monospacedDigit())
-                        .foregroundStyle(Theme.statusColor(percent: percent, warn: warn, crit: crit))
+                    if showsPercent {
+                        Text("\(Int(percent))%")
+                            .font(.system(size: 11, weight: .bold).monospacedDigit())
+                            .foregroundStyle(Theme.statusColor(percent: percent, warn: warn, crit: crit))
+                    }
+                    if let countdown {
+                        Text(countdown)
+                            .font(.system(size: 9).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .id(index)
                 .transition(.asymmetric(
                     insertion: .move(edge: .bottom).combined(with: .opacity),
                     removal: .move(edge: .top).combined(with: .opacity)
                 ))
-                .frame(width: 44, height: 16)
+                .fixedSize()
+                .frame(height: 16)
                 .clipped()
             }
             .padding(.horizontal, 13)
@@ -315,7 +351,8 @@ struct HoverCard: View {
             }
         }
         .padding(12)
-        .frame(width: 210, alignment: .leading)
+        // d-포맷 카운트다운("6d 23h 59m")까지 잘림 없이 들어가도록 210 → 226.
+        .frame(width: 226, alignment: .leading)
         .contentShape(RoundedRectangle(cornerRadius: 16))
         .onTapGesture { onTap() }
     }
@@ -380,9 +417,9 @@ struct HoverCard: View {
                 Text(cd)
                     .font(.system(size: 8.5).monospacedDigit())
                     .foregroundStyle(.secondary)
-                    .frame(width: 40, alignment: .trailing)
+                    .frame(width: 56, alignment: .trailing) // "6d 23h 59m" 수용
             } else {
-                Spacer(minLength: 0).frame(width: 40)
+                Spacer(minLength: 0).frame(width: 56)
             }
         }
         .padding(.leading, 14)

@@ -11,6 +11,8 @@ public final class UsageStore {
     private var dedupKeys: Set<String> = []
     /// 분 단위 토큰 합계 캐시 (key = epoch초 / 60). burn rate 계산용. 서비스별로 분리.
     private var minuteBuckets: [ServiceID: [Int: Int]] = [:]
+    /// 서비스별 가장 최근 이벤트 timestamp 캐시 — approxFullReset이 events 전체 스캔 없이 사용 (30fps 호출 대비).
+    private var lastEventTimestamp: [ServiceID: Date] = [:]
 
     /// 서비스·윈도우종류별 사용률(%) 시계열. `setLimits`에서 append되며 최근 60분만 유지.
     /// 소진 예측(DepletionEstimator)의 입력으로 사용.
@@ -18,6 +20,13 @@ public final class UsageStore {
 
     /// 이벤트 보존 기간 (일). 이보다 오래된 이벤트는 ingest 시 무시.
     public static let retentionDays = 8
+
+    /// 첫 addEvents(초기 로드) 완료 여부. true가 되기 전에는 컴백 공백을 기록하지 않는다.
+    private var hasLoadedInitialBatch = false
+    /// 지금까지 addEvents로 추가된 이벤트 중 최대 timestamp.
+    private var lastKnownMaxTimestamp: Date?
+    /// 다음 consumeComebackGap() 호출 시 반환할 공백(초). nil이면 미감지.
+    private var pendingComebackGap: TimeInterval?
 
     public init() {}
 
@@ -51,6 +60,10 @@ public final class UsageStore {
         // 수집기는 최근 8일 파일만 읽지만, 파일 내 오래된 라인 방어용 컷오프
         let cutoff = Date().addingTimeInterval(-Double(Self.retentionDays) * 24 * 3600)
         var added = false
+        // 컴백 감지는 **실제 추가된** 이벤트 기준이어야 한다 — dedup으로 버려진 옛 이벤트
+        // (rotation 재파싱 등)가 batchMin에 섞이면 gap이 음수가 되어 미발화한다.
+        var addedMin: Date?
+        var addedMax: Date?
         for (event, key) in batch {
             guard event.timestamp >= cutoff else { continue }
             if let key {
@@ -60,6 +73,14 @@ public final class UsageStore {
             events.append(event)
             let minute = Int(event.timestamp.timeIntervalSince1970) / 60
             minuteBuckets[event.service, default: [:]][minute, default: 0] += event.totalTokens
+            // 서비스별 최신 timestamp 캐시 갱신 (approxFullReset용)
+            if let prev = lastEventTimestamp[event.service] {
+                if event.timestamp > prev { lastEventTimestamp[event.service] = event.timestamp }
+            } else {
+                lastEventTimestamp[event.service] = event.timestamp
+            }
+            if addedMin == nil || event.timestamp < addedMin! { addedMin = event.timestamp }
+            if addedMax == nil || event.timestamp > addedMax! { addedMax = event.timestamp }
             added = true
         }
         if added {
@@ -72,7 +93,31 @@ public final class UsageStore {
                     minuteBuckets[svc] = minuteBuckets[svc]!.filter { $0.key > cutoffMinute }
                 }
             }
+
+            // 컴백 감지: 직전 최신 timestamp와 이번에 실제 추가된 최소 timestamp 비교
+            if let prevMax = lastKnownMaxTimestamp, let addedMin {
+                let gap = addedMin.timeIntervalSince(prevMax)
+                if !hasLoadedInitialBatch {
+                    // 첫 로드 완료 — 공백 기록 없이 플래그만 세움
+                    hasLoadedInitialBatch = true
+                } else if gap >= 3 * 3600 {
+                    pendingComebackGap = gap
+                }
+            } else if !hasLoadedInitialBatch {
+                hasLoadedInitialBatch = true
+            }
+
+            // 최신 타임스탬프 갱신 (실제 추가분 기준)
+            if let addedMax, lastKnownMaxTimestamp == nil || addedMax > lastKnownMaxTimestamp! {
+                lastKnownMaxTimestamp = addedMax
+            }
         }
+    }
+
+    /// 감지된 컴백 공백을 반환하고 클리어한다. 없으면 nil.
+    public func consumeComebackGap() -> TimeInterval? {
+        defer { pendingComebackGap = nil }
+        return pendingComebackGap
     }
 
     public func setGeminiRequests(_ dates: [Date]) {
@@ -277,8 +322,8 @@ public final class UsageStore {
     /// 계산 결과가 now 이전이면(이미 리셋됨) nil. 이벤트 없으면 nil.
     public func approxFullReset(service: ServiceID, kind: LimitWindow.Kind, now: Date) -> Date? {
         guard kind != .daily else { return nil }
-        let serviceEvents = events.filter { $0.service == service }
-        guard let latest = serviceEvents.map(\.timestamp).max() else { return nil }
+        // O(1) 캐시 조회 — WavePill이 30fps로 호출하므로 events 전체 스캔 금지.
+        guard let latest = lastEventTimestamp[service] else { return nil }
         let interval: TimeInterval
         switch kind {
         case .session5h: interval = 300 * 60

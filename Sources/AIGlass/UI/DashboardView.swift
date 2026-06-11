@@ -2,6 +2,13 @@ import SwiftUI
 import Charts
 import AIGlassCore
 
+/// 패널이 열릴 때마다 count를 올려 콘텐츠(`.id`)를 재생성 → onAppear 애니메이션 재생.
+@MainActor
+@Observable
+final class OpenToken {
+    var count = 0
+}
+
 struct DashboardView: View {
     let store: UsageStore
     /// 30일 영구 통계 (옵셔널 — nil이면 추이 탭의 30일 토글 숨김).
@@ -15,6 +22,8 @@ struct DashboardView: View {
     var onReplay: (HUDEvent) -> Void = { _ in }
     /// 탭 전환 등 콘텐츠 높이 변화 시 패널 리사이즈 요청.
     var onResize: () -> Void = {}
+    /// 패널이 열릴 때마다 count 증가 — `.id`로 콘텐츠 재생성해 첫 진입 애니메이션 재생.
+    var openToken: OpenToken? = nil
     @State private var tab: Tab = .overview
 
     enum Tab: String, CaseIterable, Identifiable {
@@ -61,6 +70,7 @@ struct DashboardView: View {
             }
             .animation(.spring(duration: 0.32), value: tab)
         }
+        .id(openToken?.count ?? 0)
         .padding(14)
         .frame(width: 320)
         .onChange(of: tab) { onResize() }
