@@ -43,12 +43,15 @@ enum AIGlassMain {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let store = UsageStore()
+    let settings = AppSettings()
     var statusItem: NSStatusItem?
     var popover: NSPopover?
     let hudState = HUDState()
     let eventEngine = EventEngine()
     var hudController: HUDPanelController?
     var watcher: DirectoryWatcher?
+    var hotKey: GlobalHotKey?
+    let notifier = Notifier()
     lazy var claudeCollector = ClaudeCollector(
         root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects"))
     lazy var codexCollector = CodexCollector(
@@ -69,8 +72,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pop.contentViewController = NSHostingController(rootView: DashboardView(store: store))
         popover = pop
 
-        hudController = HUDPanelController(store: store, state: hudState) { [weak self] in
+        hudController = HUDPanelController(store: store, state: hudState, settings: settings) { [weak self] in
             self?.togglePopover()
+        }
+        hudController?.setVisible(settings.hudVisible)
+
+        // 글로벌 단축키 ⌘⇧U → 팝오버 토글 (Carbon 이벤트는 메인 스레드)
+        hotKey = GlobalHotKey { [weak self] in
+            MainActor.assumeIsolated { self?.togglePopover() }
         }
 
         refresh()
