@@ -248,8 +248,8 @@ struct WavePill: View {
             let index = services.isEmpty ? 0 : Int(t / 6) % services.count
             let current: ServiceID? = services.isEmpty ? nil : services[index]
             let percent = current.map(displayPercent) ?? maxEnabledPercent
-            // 한도 임박: 빨강 글로우 호흡 (2초 주기, 추가 타이머 없이 같은 t 재사용).
-            let critical = maxEnabledPercent >= crit
+            // 현재 롤링 중인 서비스의 표시 윈도우가 임계값 이상일 때만 빨강 글로우 호흡.
+            let critical = current != nil && percent >= crit
             let glow = 0.5 + 0.5 * sin(t * (2 * .pi / 2.0)) // 0...1, 2초 주기
             let glowRadius = critical ? 6 + 8 * glow : 0
 
@@ -270,7 +270,7 @@ struct WavePill: View {
                             .frame(width: 6, height: 6)
                     }
                     if showsPercent {
-                        Text("\(Int(percent))%")
+                        Text(Theme.formatUsagePercent(percent))
                             .font(.system(size: 11, weight: .bold).monospacedDigit())
                             .foregroundStyle(Theme.statusColor(percent: percent, warn: warn, crit: crit))
                     }
@@ -327,8 +327,8 @@ struct HoverCard: View {
             }
         }
         .padding(12)
-        // d-포맷 카운트다운("6d 23h 59m")까지 잘림 없이 들어가도록 210 → 226.
-        .frame(width: 226, alignment: .leading)
+        // 100%와 d-포맷 카운트다운("6d 23h 59m")까지 잘림 없이 들어가도록 폭 확보.
+        .frame(width: 238, alignment: .leading)
         .contentShape(RoundedRectangle(cornerRadius: 16))
         .onTapGesture { onTap() }
     }
@@ -394,10 +394,11 @@ struct HoverCard: View {
                 .frame(width: 26, alignment: .leading)
             GaugeBar(percent: percent, tint: tint)
                 .frame(width: 50)
-            Text("\(Int(percent))%")
+            Text(Theme.formatUsagePercent(percent))
                 .font(.system(size: 10, weight: .bold).monospacedDigit())
                 .foregroundStyle(tint)
-                .frame(width: 30, alignment: .trailing)
+                .lineLimit(1)
+                .frame(width: 36, alignment: .trailing)
             if let cd = countdown(window, service: service) {
                 Text(cd.text)
                     .font(.system(size: 8.5).monospacedDigit())

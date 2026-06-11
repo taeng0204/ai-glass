@@ -23,6 +23,11 @@ enum Theme {
         if percent >= warn { return .orange }
         return safeGreen
     }
+
+    static func formatUsagePercent(_ percent: Double) -> String {
+        if percent <= 0 { return "0%" }
+        return "\(max(1, Int(percent.rounded())))%"
+    }
 }
 
 struct GaugeBar: View {

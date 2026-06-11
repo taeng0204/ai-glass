@@ -101,7 +101,8 @@ private func stamped(_ template: String, secondsAgo: TimeInterval = 60) -> Strin
     let store = UsageStore()
     // historyFile은 존재하지 않는 경로로 지정해 실제 홈의 antigravity 히스토리 누출 방지
     let collector = GeminiCollector(root: dir, dailyQuota: 100,
-                                    historyFile: dir.appendingPathComponent("nonexistent.jsonl"))
+                                    historyFile: dir.appendingPathComponent("nonexistent.jsonl"),
+                                    logDir: dir.appendingPathComponent("missing-log"))
     collector.collect(into: store)
     #expect(store.geminiRequestDates.count == 1)
     #expect(store.limits[.gemini]?.first?.usedPercent == 1.0)
@@ -132,8 +133,46 @@ private func stamped(_ template: String, secondsAgo: TimeInterval = 60) -> Strin
     try Data(history.utf8).write(to: historyFile)
 
     let store = UsageStore()
-    let collector = GeminiCollector(root: dir, dailyQuota: 100, historyFile: historyFile)
+    let collector = GeminiCollector(root: dir, dailyQuota: 100, historyFile: historyFile,
+                                    logDir: dir.appendingPathComponent("missing-log"))
     collector.collect(into: store, now: now)
     #expect(store.geminiRequestDates.count == 3) // 1 legacy + 2 antigravity
     #expect(store.limits[.gemini]?.first?.usedPercent == 3.0) // 3/100 = 3%
+}
+
+/// 항목3: Antigravity CLI 로그가 있으면 history 프롬프트 수보다 실제 모델 호출 수를 우선한다.
+@MainActor @Test func geminiCollectorPrefersAntigravityModelRequestLogs() throws {
+    let dir = try makeTempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    let calendar = Calendar.current
+    let now = try #require(calendar.date(from: DateComponents(year: 2026, month: 6, day: 11,
+                                                              hour: 12, minute: 0, second: 10)))
+    let comps = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: now)
+    let year = try #require(comps.year)
+    let month = try #require(comps.month)
+    let day = try #require(comps.day)
+    let hour = try #require(comps.hour)
+    let minute = try #require(comps.minute)
+    let second = try #require(comps.second)
+
+    let historyFile = dir.appendingPathComponent("history.jsonl")
+    let ms = Int(now.timeIntervalSince1970 * 1000)
+    try Data(#"{"display":"prompt","timestamp":\#(ms),"workspace":"/Users/me/proj"}"#.utf8)
+        .write(to: historyFile)
+
+    let logDir = dir.appendingPathComponent("log")
+    try FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
+    let log = (0..<3).map { offset in
+        let sec = second - offset
+        return String(format: "I%02d%02d %02d:%02d:%02d.000000 1 http_helpers.go:183] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse Trace: 0x%d",
+                      month, day, hour, minute, sec, offset)
+    }.joined(separator: "\n")
+    try Data(log.utf8).write(to: logDir.appendingPathComponent("cli-\(year)0101_000000.log"))
+
+    let store = UsageStore()
+    let collector = GeminiCollector(root: dir, dailyQuota: 100, historyFile: historyFile, logDir: logDir)
+    collector.collect(into: store, now: now)
+    #expect(store.geminiRequestDates.count == 3)
+    #expect(store.limits[.gemini]?.first?.usedPercent == 3.0)
 }

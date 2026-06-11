@@ -49,3 +49,24 @@ import Testing
     #expect(entries.count == 1)
     #expect(entries[0].project == "proj")
 }
+
+@Test func antigravityParsesModelRequestLogLines() {
+    let log = """
+    I0611 23:20:50.123456 19134 http_helpers.go:183] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse Trace: 0x1
+    I0611 23:20:51.123456 19134 http_helpers.go:183] URL: https://example.invalid/noop
+    I0611 23:21:00.000000 19134 http_helpers.go:183] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse Trace: 0x2
+    """
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+    let dates = AntigravityLogParser.modelRequestDates(logData: Data(log.utf8),
+                                                       year: 2026,
+                                                       calendar: calendar)
+    #expect(dates.count == 2)
+    let comps = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: dates[0])
+    #expect(comps.year == 2026)
+    #expect(comps.month == 6)
+    #expect(comps.day == 11)
+    #expect(comps.hour == 23)
+    #expect(comps.minute == 20)
+    #expect(comps.second == 50)
+}

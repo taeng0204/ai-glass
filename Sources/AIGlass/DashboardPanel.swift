@@ -19,6 +19,9 @@ final class DashboardPanelController {
 
     private var globalMonitor: Any?
     private var localMonitor: Any?
+    /// HUD/메뉴바 버튼처럼 클릭 자체가 토글 액션으로 이어지는 영역.
+    /// 바깥 클릭 모니터가 mouseDown에서 먼저 닫아버리면 mouseUp 액션이 다시 열어 토글이 깨진다.
+    var toggleSourceFrames: () -> [NSRect] = { [] }
     /// 패널이 열릴 때마다 +1 → DashboardView가 `.id`로 콘텐츠 재생성(첫 진입 애니메이션 재생).
     private let openToken = OpenToken()
 
@@ -140,7 +143,10 @@ final class DashboardPanelController {
         removeMonitors()
         // 바깥(다른 앱) 클릭 → 닫기. 자기 앱 클릭엔 안 오므로 로컬 모니터로 보강.
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            MainActor.assumeIsolated { self?.close() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if !self.isToggleSourceClick(at: NSEvent.mouseLocation) { self.close() }
+            }
         }
         // 자기 앱 내 클릭(패널 밖) + ESC 처리.
         // nonactivating 패널은 key가 되지 않아 event.window가 패널이 아닐 수 있으므로,
@@ -155,10 +161,16 @@ final class DashboardPanelController {
             // 클릭: 화면 좌표가 패널 프레임 밖이면 닫기.
             let point = NSEvent.mouseLocation
             return MainActor.assumeIsolated {
-                if !self.panel.frame.contains(point) { self.close() }
+                if !self.panel.frame.contains(point), !self.isToggleSourceClick(at: point) {
+                    self.close()
+                }
                 return event
             }
         }
+    }
+
+    private func isToggleSourceClick(at point: NSPoint) -> Bool {
+        toggleSourceFrames().contains { $0.contains(point) }
     }
 
     private func removeMonitors() {

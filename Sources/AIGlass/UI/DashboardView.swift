@@ -117,6 +117,8 @@ private struct OverviewTab: View {
             ForEach(rows, id: \.service) { row in
                 ServiceRow(service: row.service,
                            windows: row.windows,
+                           isLoadingLimits: row.service == .claude && hasUsage(for: .claude),
+                           detailText: row.service == .gemini ? antigravityRequestDetail(now: now) : nil,
                            approxReset: { kind in
                                store.approxFullReset(service: row.service, kind: kind, now: now)
                            },
@@ -174,6 +176,14 @@ private struct OverviewTab: View {
             .filter { services.contains($0.service) && $0.timestamp >= start }
             .reduce(0) { $0 + $1.totalTokens }
     }
+    private func hasUsage(for service: ServiceID) -> Bool {
+        store.events.contains { $0.service == service }
+    }
+    private func antigravityRequestDetail(now: Date) -> String? {
+        let start = Calendar.current.startOfDay(for: now)
+        let count = store.geminiRequestDates.filter { $0 >= start && $0 <= now }.count
+        return count > 0 ? "오늘 \(count)회" : nil
+    }
     /// 오늘 이벤트의 추정 비용 (API 환산 추정치, enabled 서비스만).
     private func todayCost(_ services: [ServiceID], now: Date) -> Double {
         let start = Calendar.current.startOfDay(for: now)
@@ -200,6 +210,8 @@ private func formatTokens(_ n: Int) -> String {
 private struct ServiceRow: View {
     let service: ServiceID
     let windows: [LimitWindow]
+    var isLoadingLimits: Bool = false
+    var detailText: String? = nil
     let approxReset: (LimitWindow.Kind) -> Date?
     /// 윈도우 kind별 소진 경고 (해당 윈도우 행 바로 아래에 표시).
     var depletions: [LimitWindow.Kind: Depletion] = [:]
@@ -217,15 +229,21 @@ private struct ServiceRow: View {
             HStack {
                 Circle().fill(Theme.color(for: service)).frame(width: 8, height: 8)
                 Text(service.displayName).font(.system(size: 12, weight: .semibold))
+                if let detailText {
+                    Text(detailText)
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 Spacer()
-                Text(primary.map { "\(Int($0.usedPercent))%" } ?? "–")
+                Text(primary.map { Theme.formatUsagePercent($0.usedPercent) } ?? "–")
                     .font(.system(size: 12, weight: .bold).monospacedDigit())
                     .foregroundStyle(primary.map {
                         Theme.statusColor(percent: $0.usedPercent, warn: warn, crit: crit)
                     } ?? .secondary)
             }
             if windows.isEmpty {
-                Text("데이터 없음")
+                Text(isLoadingLimits ? "한도 조회 중" : "데이터 없음")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             } else {
@@ -270,7 +288,7 @@ private struct ServiceRow: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 26, alignment: .leading)
             GaugeBar(percent: window.usedPercent, tint: tint, appearDelay: delay)
-            Text("\(Int(window.usedPercent))%")
+            Text(Theme.formatUsagePercent(window.usedPercent))
                 .font(.system(size: 10, weight: .bold).monospacedDigit())
                 .foregroundStyle(tint)
                 .frame(width: 32, alignment: .trailing)

@@ -98,13 +98,18 @@ public final class GeminiCollector {
     private let dailyQuota: Int
     /// Antigravity(agy) CLI 히스토리 파일. 작아서 매번 전체 재읽기.
     private let historyFile: URL
+    /// Antigravity(agy) CLI 로그 디렉토리. 실제 모델 호출 수 추정에 사용.
+    private let logDir: URL
 
-    public init(root: URL, dailyQuota: Int = 1000, historyFile: URL? = nil) {
+    public init(root: URL, dailyQuota: Int = 1000, historyFile: URL? = nil, logDir: URL? = nil) {
         self.root = root
         self.dailyQuota = dailyQuota
         self.historyFile = historyFile
             ?? FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent(".gemini/antigravity-cli/history.jsonl")
+        self.logDir = logDir
+            ?? FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".gemini/antigravity-cli/log")
     }
 
     public func collect(into store: UsageStore, now: Date = Date()) {
@@ -114,12 +119,35 @@ public final class GeminiCollector {
             guard let data = try? Data(contentsOf: file) else { continue }
             allDates.append(contentsOf: GeminiLogParser.userMessageDates(jsonData: data))
         }
-        // Antigravity 히스토리 (history.jsonl) 전체 재읽기 → 요청 날짜 합산
-        if let data = try? Data(contentsOf: historyFile) {
+
+        // Antigravity 실제 모델 호출 로그가 오늘 있으면 우선 사용. 없으면 히스토리 프롬프트 수로 폴백.
+        let agyModelRequests = antigravityModelRequestDates()
+        let startOfDay = Calendar.current.startOfDay(for: now)
+        let hasTodayModelRequests = agyModelRequests.contains { $0 >= startOfDay && $0 <= now }
+        if hasTodayModelRequests {
+            allDates.append(contentsOf: agyModelRequests)
+        } else if let data = try? Data(contentsOf: historyFile) {
             allDates.append(contentsOf: AntigravityLogParser.entries(jsonData: data).map(\.date))
         }
         store.setGeminiRequests(allDates)
         let window = GeminiLogParser.dailyWindow(requestDates: allDates, quota: dailyQuota, now: now)
         store.setLimits([window], for: .gemini)
+    }
+
+    private func antigravityModelRequestDates() -> [Date] {
+        var dates: [Date] = []
+        for file in LogLocator.recentFiles(under: logDir, suffix: ".log", modifiedWithinDays: 8) {
+            guard let year = Self.year(fromLogFilename: file.lastPathComponent),
+                  let data = try? Data(contentsOf: file) else { continue }
+            dates.append(contentsOf: AntigravityLogParser.modelRequestDates(logData: data, year: year))
+        }
+        return dates
+    }
+
+    private static func year(fromLogFilename filename: String) -> Int? {
+        guard filename.hasPrefix("cli-"), filename.count >= 12 else { return nil }
+        let start = filename.index(filename.startIndex, offsetBy: 4)
+        let end = filename.index(start, offsetBy: 4)
+        return Int(filename[start..<end])
     }
 }

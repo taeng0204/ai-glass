@@ -17,7 +17,7 @@ final class HUDPanelController {
     init(store: UsageStore, state: HUDState, settings: AppSettings, onTap: @escaping () -> Void) {
         self.settings = settings
         // HoverCard가 서비스당 2줄(5h+주간)로 확장되어 높이 상향 (v0.5).
-        let size = NSSize(width: 280, height: 190)
+        let size = NSSize(width: 292, height: 190)
         panel = NSPanel(contentRect: NSRect(origin: .zero, size: size),
                         styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
                         backing: .buffered, defer: false)

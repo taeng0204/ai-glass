@@ -34,4 +34,43 @@ public enum AntigravityLogParser {
         }
         return result
     }
+
+    /// Antigravity CLI 로그에서 실제 모델 요청(`streamGenerateContent`) 시각을 추출한다.
+    /// 로그 라인은 `I0611 23:20:50.123456 ... streamGenerateContent ...` 형식이고,
+    /// 파일명(`cli-YYYYMMDD_HHMMSS.log`)에서 year를 주입받는다.
+    public static func modelRequestDates(logData: Data, year: Int,
+                                         calendar: Calendar = .current) -> [Date] {
+        guard let text = String(data: logData, encoding: .utf8) else { return [] }
+        var result: [Date] = []
+        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            guard rawLine.contains("streamGenerateContent") else { continue }
+            let line = String(rawLine)
+            guard line.count >= 22 else { continue }
+            let chars = Array(line)
+            guard chars[1].isNumber, chars[2].isNumber, chars[3].isNumber, chars[4].isNumber,
+                  chars[6].isNumber, chars[7].isNumber,
+                  chars[9].isNumber, chars[10].isNumber,
+                  chars[12].isNumber, chars[13].isNumber,
+                  chars[15].isNumber, chars[16].isNumber
+            else { continue }
+
+            let month = Int(String(chars[1...2])) ?? 0
+            let day = Int(String(chars[3...4])) ?? 0
+            let hour = Int(String(chars[6...7])) ?? 0
+            let minute = Int(String(chars[9...10])) ?? 0
+            let second = Int(String(chars[12...13])) ?? 0
+            var components = DateComponents()
+            components.calendar = calendar
+            components.year = year
+            components.month = month
+            components.day = day
+            components.hour = hour
+            components.minute = minute
+            components.second = second
+            if let date = calendar.date(from: components) {
+                result.append(date)
+            }
+        }
+        return result
+    }
 }

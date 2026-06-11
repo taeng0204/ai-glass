@@ -8,25 +8,20 @@ import Carbon.HIToolbox
 enum AIGlassMain {
     static func main() {
         if CommandLine.arguments.contains("--check-claude") {
-            let semaphore = DispatchSemaphore(value: 0)
-            Task {
-                defer { semaphore.signal() }
-                guard let creds = ClaudeCredentials.fromKeychain() else {
-                    print("Keychain에서 Claude Code 자격증명을 찾지 못했습니다.")
-                    return
-                }
-                do {
-                    let (windows, raw, status) = try await ClaudeUsageAPI.fetch(token: creds.accessToken)
-                    if !(200..<300).contains(status) {
-                        print("HTTP", status)
-                    }
-                    print("RAW:", String(decoding: raw, as: UTF8.self))
-                    print("PARSED:", windows ?? "파싱 실패 — parse(_:)를 실제 스키마에 맞춰 수정할 것")
-                } catch {
-                    print("API 호출 실패:", error)
-                }
+            guard let creds = ClaudeCredentials.fromKeychain() else {
+                print("Keychain에서 Claude Code 자격증명을 찾지 못했습니다.")
+                exit(0)
             }
-            semaphore.wait()
+            do {
+                let (windows, raw, status) = try ClaudeUsageAPI.fetchSynchronously(token: creds.accessToken)
+                if !(200..<300).contains(status) {
+                    print("HTTP", status)
+                }
+                print("RAW:", String(decoding: raw, as: UTF8.self))
+                print("PARSED:", windows ?? "파싱 실패 — parse(_:)를 실제 스키마에 맞춰 수정할 것")
+            } catch {
+                print("API 호출 실패:", error)
+            }
             exit(0)
         }
 
@@ -68,6 +63,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     /// Keychain 토큰 메모리 캐시 — 매 폴링마다 Keychain 다이얼로그가 뜨는 것을 막는다.
     let claudeTokens = ClaudeTokenProvider(reader: { ClaudeCredentials.fromKeychain() })
+    /// Claude 한도 API가 한 번이라도 성공했는지. 초기 Keychain 허용 직후 짧은 재시도 중단에 사용.
+    private var claudeLimitsLoaded = false
+    /// Claude 사용량 API가 429를 주면 이 시각까지 재시도를 멈춘다.
+    private var claudeLimitRetryAfter: Date?
+    private var initialClaudeLimitRetryTask: Task<Void, Never>?
     /// 시간대별 1회 브리핑 엔진. lastFired는 UserDefaults에 저장/복원.
     let briefingEngine = BriefingEngine()
     /// 마지막 브리핑 평가 시각 — 5분에 1회만 evaluate.
@@ -114,6 +114,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.togglePopover()
         }
         hudController?.setVisible(settings.hudVisible)
+        dashboardPanel?.toggleSourceFrames = { [weak self] in
+            guard let self else { return [] }
+            var frames: [NSRect] = []
+            if let hudPanel = self.hudController?.panel, hudPanel.isVisible {
+                frames.append(hudPanel.frame)
+            }
+            if let button = self.statusItem?.button, let window = button.window {
+                let rectInWindow = button.convert(button.bounds, to: nil)
+                frames.append(window.convertToScreen(rectInWindow).insetBy(dx: -4, dy: -4))
+            }
+            return frames
+        }
 
         restoreBriefingState()
 
@@ -141,8 +153,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             MainActor.assumeIsolated { self?.refresh() }
         }
 
-        // Claude 한도: 60초 폴링 (Keychain 접근은 최초 1회 허용 필요)
-        pollClaudeLimits()
+        // Claude 한도: 시작 직후에는 Keychain 허용 타이밍 때문에 짧게 재시도하고, 이후 60초 주기로 유지.
+        startInitialClaudeLimitWarmup()
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.pollClaudeLimits() }
         }
@@ -196,7 +208,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         case .maxPercent:
             let percent = store.maxUsedPercent(in: settings.enabledServices)
-            setPlainTitle(percent > 0 ? "✦ \(Int(percent))%" : "✦ –", on: button)
+            setPlainTitle(percent > 0 ? "✦ \(Theme.formatUsagePercent(percent))" : "✦ –", on: button)
 
         case .iconOnly:
             // "✦"만 + 위험도 색. 색 단계가 같으면 set 생략.
@@ -300,20 +312,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    private func startInitialClaudeLimitWarmup() {
+        initialClaudeLimitRetryTask?.cancel()
+        initialClaudeLimitRetryTask = Task { @MainActor [weak self] in
+            // 시작 직후 0s, 2s, 5s, 10s, 20s, 30s 근처에서만 짧게 재시도한다.
+            for delay in [0, 2, 3, 5, 10, 10] {
+                if delay > 0 {
+                    try? await Task.sleep(for: .seconds(delay))
+                }
+                guard !Task.isCancelled, let self, !self.claudeLimitsLoaded else { return }
+                if await self.fetchClaudeLimits() { return }
+            }
+        }
+    }
+
     func pollClaudeLimits() {
         Task { @MainActor in
-            guard let token = claudeTokens.token() else { return }
-            guard let result = try? await ClaudeUsageAPI.fetch(token: token) else { return }
-            // 401: 토큰 거부 → 캐시 무효화(다음 폴링에서 Keychain 재조회).
-            if result.statusCode == 401 {
-                claudeTokens.invalidate()
-                return
-            }
-            guard result.statusCode / 100 == 2, let windows = result.windows else { return }
-            store.setLimits(windows, for: .claude)
-            updateStatusTitle()
-            evaluateEvents()
+            _ = await fetchClaudeLimits()
         }
+    }
+
+    private func fetchClaudeLimits() async -> Bool {
+        if let retryAfter = claudeLimitRetryAfter {
+            if retryAfter > Date() { return false }
+            claudeLimitRetryAfter = nil
+        }
+        guard let token = claudeTokens.token() else { return false }
+        guard let result = try? await ClaudeUsageAPI.fetch(token: token) else { return false }
+        // 401: 토큰 거부 → 캐시 무효화(다음 폴링에서 Keychain 재조회).
+        if result.statusCode == 401 {
+            claudeTokens.invalidate()
+            claudeLimitsLoaded = false
+            return false
+        }
+        // 429: 초기 웜업/수동 진단이 겹쳐 API 제한에 걸리면 기존 표시를 유지하고 잠시 쉰다.
+        if result.statusCode == 429 {
+            claudeLimitRetryAfter = Date().addingTimeInterval(60)
+            claudeLimitsLoaded = !(store.limits[.claude]?.isEmpty ?? true)
+            return false
+        }
+        guard result.statusCode / 100 == 2, let windows = result.windows else { return false }
+        claudeLimitRetryAfter = nil
+        claudeLimitsLoaded = true
+        store.setLimits(windows, for: .claude)
+        updateStatusTitle()
+        evaluateEvents()
+        return true
     }
 
     func refresh() {
@@ -571,7 +615,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// 설정 창을 연다. 이미 떠 있으면 앞으로 가져온다.
     @objc func openSettings() {
+        dashboardPanel?.close()
         if let win = settingsWindow {
+            centerOnCurrentScreen(win)
             NSApp.activate(ignoringOtherApps: true)
             win.makeKeyAndOrderFront(nil)
             return
@@ -584,11 +630,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         win.title = "AI Glass 설정"
         win.styleMask = [.titled, .closable]
         win.isReleasedWhenClosed = false
-        win.center()
+        centerOnCurrentScreen(win)
         win.delegate = self
         settingsWindow = win
         NSApp.activate(ignoringOtherApps: true)
         win.makeKeyAndOrderFront(nil)
+    }
+
+    private func centerOnCurrentScreen(_ window: NSWindow) {
+        let screen = statusItem?.button?.window?.screen ?? NSScreen.main
+        guard let frame = screen?.visibleFrame else {
+            window.center()
+            return
+        }
+        let size = window.frame.size
+        let origin = NSPoint(
+            x: frame.midX - size.width / 2,
+            y: frame.midY - size.height / 2
+        )
+        window.setFrameOrigin(origin)
     }
 
     func windowWillClose(_ notification: Notification) {
