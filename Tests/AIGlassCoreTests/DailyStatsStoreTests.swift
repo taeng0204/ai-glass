@@ -133,3 +133,63 @@ private func tempDBPath() -> String {
     let snaps = store.percentSnapshots(service: .claude, kind: .weekly, days: 8, now: now)
     #expect(snaps.map(\.percent) == [50])  // 40일 전은 범위 밖
 }
+
+// MARK: - 신기록 / 스트릭 (v0.9 A2)
+
+@MainActor @Test func maxDailyTokensExcludesToday() {
+    let store = try! #require(DailyStatsStore(path: tempDBPath()))
+    let now = ISO8601.date("2026-06-10T12:00:00Z")!
+    func ev(_ ts: Date, _ tk: Int) -> TokenEvent {
+        TokenEvent(service: .claude, timestamp: ts, model: "m",
+                   inputTokens: tk, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0)
+    }
+    let d8 = now.addingTimeInterval(-2 * 86400)  // 2일 전: 500
+    let d9 = now.addingTimeInterval(-1 * 86400)  // 1일 전: 800
+    store.upsert(events: [ev(d8, 500), ev(d9, 800), ev(now, 9999)], calendar: .utc)
+    // 오늘(now) 제외 최대 = 800
+    let max = store.maxDailyTokens(excludingDay: now, calendar: .utc)
+    #expect(max == 800)
+}
+
+@MainActor @Test func maxDailyTokensNilWhenNoOtherDays() {
+    let store = try! #require(DailyStatsStore(path: tempDBPath()))
+    let now = ISO8601.date("2026-06-10T12:00:00Z")!
+    let e = TokenEvent(service: .claude, timestamp: now, model: "m",
+                       inputTokens: 100, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0)
+    store.upsert(events: [e], calendar: .utc)
+    #expect(store.maxDailyTokens(excludingDay: now, calendar: .utc) == nil)  // 오늘만 있음 → nil
+}
+
+@MainActor @Test func streakDaysCountsConsecutive() {
+    let store = try! #require(DailyStatsStore(path: tempDBPath()))
+    let now = ISO8601.date("2026-06-10T12:00:00Z")!
+    func ev(_ daysAgo: Int, _ tk: Int) -> TokenEvent {
+        TokenEvent(service: .claude, timestamp: now.addingTimeInterval(Double(-daysAgo) * 86400), model: "m",
+                   inputTokens: tk, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0)
+    }
+    // 오늘/어제/그제 모두 토큰 > 0 → 3일 연속
+    store.upsert(events: [ev(0, 10), ev(1, 20), ev(2, 30)], calendar: .utc)
+    #expect(store.streakDays(endingOn: now, calendar: .utc) == 3)
+}
+
+@MainActor @Test func streakDaysBreaksOnGap() {
+    let store = try! #require(DailyStatsStore(path: tempDBPath()))
+    let now = ISO8601.date("2026-06-10T12:00:00Z")!
+    func ev(_ daysAgo: Int, _ tk: Int) -> TokenEvent {
+        TokenEvent(service: .claude, timestamp: now.addingTimeInterval(Double(-daysAgo) * 86400), model: "m",
+                   inputTokens: tk, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0)
+    }
+    // 오늘/어제는 있으나 그제(2일 전)는 공백 → 3일 전 활동은 단절로 무시 → streak 2
+    store.upsert(events: [ev(0, 10), ev(1, 20), ev(3, 30)], calendar: .utc)
+    #expect(store.streakDays(endingOn: now, calendar: .utc) == 2)
+}
+
+@MainActor @Test func streakDaysZeroWhenTodayEmpty() {
+    let store = try! #require(DailyStatsStore(path: tempDBPath()))
+    let now = ISO8601.date("2026-06-10T12:00:00Z")!
+    // 어제까지만 활동, 오늘은 0 → 오늘 포함 기준이므로 streak 0
+    let e = TokenEvent(service: .claude, timestamp: now.addingTimeInterval(-86400), model: "m",
+                       inputTokens: 10, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0)
+    store.upsert(events: [e], calendar: .utc)
+    #expect(store.streakDays(endingOn: now, calendar: .utc) == 0)
+}

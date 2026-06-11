@@ -100,6 +100,8 @@ extension HUDEvent.Kind {
         case .windowReset: return "sparkles"
         case .burnSpike: return "flame.fill"
         case .comeback: return "figure.wave"
+        case .milestone: return "party.popper.fill"
+        case .record: return "trophy.fill"
         case .briefing(let period):
             switch period {
             case .morning: return "sun.max.fill"
@@ -115,6 +117,8 @@ extension HUDEvent.Kind {
         case .windowReset: return .green
         case .burnSpike: return .pink
         case .comeback: return .cyan
+        case .milestone: return .yellow
+        case .record: return .orange
         case .briefing(let period):
             switch period {
             case .morning: return .yellow

@@ -58,6 +58,55 @@ private func at(_ iso: String) -> Date { ISO8601.date(iso)! }
     #expect(event.subtitle.contains("$4.00"))   // 2.0 / 0.5
 }
 
+// MARK: - 주간 리포트 (v0.9 A2)
+
+// 2026-06-08은 월요일 (weekday == 2).
+@MainActor @Test func mondayMorningIsWeeklyReport() {
+    let engine = BriefingEngine(calendar: utc)
+    let data = BriefingEngine.BriefingData(
+        yesterdayTokens: 1_200_000, yesterdayCost: 4.5,
+        lastWeekTokens: 12_000_000, lastWeekCost: 45.0,
+        prevWeekTokens: 10_000_000, lastWeekTopProject: "ai-glass")
+    let event = try! #require(engine.evaluate(now: at("2026-06-08T09:00:00Z"), data: data))
+    if case .briefing(.morning) = event.kind {} else { Issue.record("morning kind 아님") }
+    #expect(event.title == "주간 리포트 📊")
+    #expect(event.subtitle.contains("12.0M"))
+    #expect(event.subtitle.contains("$45.00"))
+    #expect(event.subtitle.contains("ai-glass"))
+    #expect(event.subtitle.contains("+20%"))  // 12M vs 10M = +20%
+}
+
+@MainActor @Test func nonMondayMorningStaysRegular() {
+    let engine = BriefingEngine(calendar: utc)
+    // 2026-06-09은 화요일.
+    let data = BriefingEngine.BriefingData(
+        yesterdayTokens: 1_200_000, yesterdayCost: 4.5,
+        lastWeekTokens: 12_000_000, lastWeekCost: 45.0)
+    let event = try! #require(engine.evaluate(now: at("2026-06-09T09:00:00Z"), data: data))
+    #expect(event.title == "어제 사용 브리핑")  // 일반판
+}
+
+@MainActor @Test func mondayWithoutWeeklyDataFallsBackToRegular() {
+    let engine = BriefingEngine(calendar: utc)
+    // 월요일이지만 lastWeekTokens nil → 일반 morning 폴백
+    let data = BriefingEngine.BriefingData(
+        yesterdayTokens: 1_200_000, yesterdayCost: 4.5)
+    let event = try! #require(engine.evaluate(now: at("2026-06-08T09:00:00Z"), data: data))
+    #expect(event.title == "어제 사용 브리핑")
+}
+
+@MainActor @Test func weeklyReportOmitsPercentWhenNoPrevWeek() {
+    let engine = BriefingEngine(calendar: utc)
+    let data = BriefingEngine.BriefingData(
+        yesterdayTokens: 1_200_000, yesterdayCost: 4.5,
+        lastWeekTokens: 12_000_000, lastWeekCost: 45.0,
+        prevWeekTokens: 0)
+    let event = try! #require(engine.evaluate(now: at("2026-06-08T09:00:00Z"), data: data))
+    #expect(event.title == "주간 리포트 📊")
+    #expect(!event.subtitle.contains("전주 대비"))
+    #expect(!event.subtitle.contains("%"))
+}
+
 @MainActor @Test func skipsWhenDataEmpty() {
     let engine = BriefingEngine(calendar: utc)
     let empty = BriefingEngine.BriefingData()

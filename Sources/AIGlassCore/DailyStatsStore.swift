@@ -207,6 +207,54 @@ public final class DailyStatsStore {
         return total
     }
 
+    // MARK: - 신기록 / 스트릭 (재미 로직)
+
+    /// 일별 토큰 합(4컬럼 합)의 **최댓값**을 반환한다. `excludingDay`에 해당하는 날(UTC)은 제외.
+    /// 다른 날이 하나도 없으면 nil (신기록 비교 기준이 없음).
+    public func maxDailyTokens(excludingDay: Date, calendar: Calendar = .current) -> Int? {
+        let excludeStr = Self.dayFormatter.string(from: excludingDay)
+        let sql = """
+        SELECT day, SUM(input + output + cache_read + cache_create) AS total
+        FROM daily_stats WHERE day <> ?
+        GROUP BY day ORDER BY total DESC LIMIT 1
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, excludeStr, -1, Self.SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return Int(sqlite3_column_int64(stmt, 1))
+    }
+
+    /// `endingOn`(오늘)부터 거꾸로 **연속으로 토큰 > 0**인 일수.
+    /// 오늘 토큰이 0이면 streak 0 (오늘 포함 기준). 중간 공백을 만나면 중단.
+    public func streakDays(endingOn: Date, calendar: Calendar = .current) -> Int {
+        // 토큰 > 0 인 날들의 day 문자열 집합.
+        let sql = """
+        SELECT day FROM daily_stats
+        GROUP BY day HAVING SUM(input + output + cache_read + cache_create) > 0
+        """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
+        defer { sqlite3_finalize(stmt) }
+        var activeDays = Set<String>()
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let dayC = sqlite3_column_text(stmt, 0) else { continue }
+            activeDays.insert(String(cString: dayC))
+        }
+
+        var count = 0
+        var cursor = calendar.startOfDay(for: endingOn)
+        while true {
+            let dayStr = Self.dayFormatter.string(from: cursor)
+            guard activeDays.contains(dayStr) else { break }
+            count += 1
+            guard let prev = calendar.date(byAdding: .day, value: -1, to: cursor) else { break }
+            cursor = prev
+        }
+        return count
+    }
+
     // MARK: - percent 스냅샷 (주간 일단위 소진 추정용)
 
     /// (day, service, kind)에 사용률(%) 스냅샷을 `INSERT OR REPLACE`로 기록한다.
