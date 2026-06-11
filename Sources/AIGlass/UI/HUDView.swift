@@ -202,10 +202,10 @@ struct WavePill: View {
         displayWindow(service)?.usedPercent ?? 0
     }
 
-    /// 표시 윈도우의 리셋 카운트다운. resetsAt 있으면 정확, 없으면 approxFullReset("~"), 둘 다 없으면 nil.
+    /// 표시 윈도우의 리셋 카운트다운. resetsAt(미래)이 있으면 정확, 없으면 approxFullReset("~"), 둘 다 없으면 nil.
     private func resetCountdown(_ service: ServiceID, now: Date) -> String? {
         guard let window = displayWindow(service) else { return nil }
-        if let resets = window.resetsAt {
+        if let resets = window.resetsAt, resets > now {
             return EventEngine.countdown(to: resets, from: now)
         }
         if let approx = store.approxFullReset(service: service, kind: window.kind, now: now) {
@@ -363,9 +363,18 @@ struct HoverCard: View {
         return Self.kindOrder.compactMap { kind in windows.first(where: { $0.kind == kind }) }
     }
 
-    private func countdown(_ window: LimitWindow) -> String? {
-        guard let resetsAt = window.resetsAt else { return nil }
-        return EventEngine.countdown(to: resetsAt, from: Date())
+    /// 대시보드 개요와 동일한 의미론: resetsAt(미래)이 있으면 정확 카운트다운,
+    /// 없거나 이미 지났으면 approxFullReset 근사(`~` + 톤 다운), 둘 다 없으면 nil.
+    /// (기존엔 resetsAt만 봐서 Codex처럼 근사만 가능한 서비스는 시간이 통째로 빠졌다.)
+    private func countdown(_ window: LimitWindow, service: ServiceID) -> (text: String, isApprox: Bool)? {
+        let now = Date()
+        if let resetsAt = window.resetsAt, resetsAt > now {
+            return (EventEngine.countdown(to: resetsAt, from: now), false)
+        }
+        if let approx = store.approxFullReset(service: service, kind: window.kind, now: now) {
+            return ("~" + EventEngine.countdown(to: approx, from: now), true)
+        }
+        return nil
     }
 
     /// 서비스명+점은 첫 줄에만, 이후 줄은 들여쓰기. 윈도우 없으면 단일 "–" 줄.
@@ -380,7 +389,7 @@ struct HoverCard: View {
                     if idx == 0 {
                         header(service: service)
                     }
-                    metricRow(window)
+                    metricRow(window, service: service)
                 }
             }
         }
@@ -397,9 +406,9 @@ struct HoverCard: View {
         }
     }
 
-    /// 한 윈도우 줄: 라벨 + 게이지 + % + 리셋 카운트다운.
+    /// 한 윈도우 줄: 라벨 + 게이지 + % + 리셋 카운트다운(`~`는 근사 시간에만, tertiary 톤 다운).
     /// leading=false면 헤더 아래 들여쓰기.
-    private func metricRow(_ window: LimitWindow) -> some View {
+    private func metricRow(_ window: LimitWindow, service: ServiceID) -> some View {
         let percent = window.usedPercent
         let tint = Theme.statusColor(percent: percent, warn: warn, crit: crit)
         return HStack(spacing: 6) {
@@ -413,10 +422,12 @@ struct HoverCard: View {
                 .font(.system(size: 10, weight: .bold).monospacedDigit())
                 .foregroundStyle(tint)
                 .frame(width: 30, alignment: .trailing)
-            if let cd = countdown(window) {
-                Text(cd)
+            if let cd = countdown(window, service: service) {
+                Text(cd.text)
                     .font(.system(size: 8.5).monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(cd.isApprox ? AnyShapeStyle(.tertiary)
+                                                 : AnyShapeStyle(.secondary))
+                    .lineLimit(1)
                     .frame(width: 56, alignment: .trailing) // "6d 23h 59m" 수용
             } else {
                 Spacer(minLength: 0).frame(width: 56)

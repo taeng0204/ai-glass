@@ -25,19 +25,37 @@ struct DashboardView: View {
     /// 패널이 열릴 때마다 count 증가 — `.id`로 콘텐츠 재생성해 첫 진입 애니메이션 재생.
     var openToken: OpenToken? = nil
     @State private var tab: Tab = .overview
+    /// 탭 진입 누적 횟수 — 재진입마다 탭 콘텐츠 identity를 갈아서(`.id`)
+    /// 첫 오픈과 동일한 grow+stagger+카운트업 애니메이션을 재생한다.
+    /// (전환 애니메이션 도중 같은 탭으로 되돌아오면 떠나던 뷰의 @State가 재사용되어
+    ///  게이지가 현재값에서 출렁이는 회귀가 있었다.)
+    @State private var tabVisit = 0
 
     enum Tab: String, CaseIterable, Identifiable {
         case overview = "개요", trends = "추이", projects = "프로젝트", history = "기록"
         var id: String { rawValue }
     }
 
+    /// 탭이 실제로 바뀔 때 tabVisit을 동기 증가시키는 바인딩.
+    /// (.onChange는 뷰 갱신 뒤에 불려 identity 교체가 한 박자 늦어 이중 등장이 생기므로 set에서 처리.)
+    private var tabSelection: Binding<Tab> {
+        Binding(
+            get: { tab },
+            set: { newTab in
+                guard newTab != tab else { return }
+                tabVisit += 1
+                tab = newTab
+            })
+    }
+
+    /// 탭 전환: 통짜 .move 슬라이드 대신 페이드 + 12pt 미세 오프셋 (이동 거리 톤다운).
     private static let tabTransition: AnyTransition =
-        .opacity.combined(with: .move(edge: .trailing))
+        .opacity.combined(with: .offset(x: 12))
 
     var body: some View {
         VStack(spacing: 12) {
             HStack(spacing: 8) {
-                Picker("", selection: $tab) {
+                Picker("", selection: tabSelection) {
                     ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
                 }
                 .pickerStyle(.segmented)
@@ -53,18 +71,24 @@ struct DashboardView: View {
             }
 
             ZStack(alignment: .top) {
+                // `.id(tabVisit)`: 진입마다 fresh identity → onAppear/`.task` 등장 애니메이션이
+                // 첫 오픈과 동일하게 재생된다 (전환 중 복귀 시 뷰 재사용 방지).
                 switch tab {
                 case .overview:
                     OverviewTab(store: store, settings: settings)
+                        .id(tabVisit)
                         .transition(Self.tabTransition)
                 case .trends:
                     TrendsTab(store: store, statsStore: statsStore, settings: settings)
+                        .id(tabVisit)
                         .transition(Self.tabTransition)
                 case .projects:
                     ProjectsTab(store: store, settings: settings)
+                        .id(tabVisit)
                         .transition(Self.tabTransition)
                 case .history:
                     HistoryTab(eventLog: eventLog, onReplay: onReplay)
+                        .id(tabVisit)
                         .transition(Self.tabTransition)
                 }
             }
@@ -197,9 +221,12 @@ private struct ServiceRow: View {
         }
     }
 
-    /// 한 윈도우 줄: 라벨 + 게이지(슈욱) + % + 리셋 카운트다운("~"는 근사).
+    /// 한 윈도우 줄: 라벨 + 게이지(슈욱) + % + 리셋 카운트다운.
+    /// `~`는 **리셋 시각이 근사일 때 시간에만** 붙는다 (사용량 %는 항상 정확값).
+    /// 근사 시간은 tertiary로 톤 다운해 %와 시각적으로 분리한다.
     private func windowRow(_ window: LimitWindow, delay: Double) -> some View {
         let tint = Theme.statusColor(percent: window.usedPercent, warn: warn, crit: crit)
+        let reset = resetLabel(window)
         return HStack(spacing: 6) {
             Text(window.kind.label)
                 .font(.system(size: 10, weight: .medium))
@@ -210,22 +237,26 @@ private struct ServiceRow: View {
                 .font(.system(size: 10, weight: .bold).monospacedDigit())
                 .foregroundStyle(tint)
                 .frame(width: 32, alignment: .trailing)
-            Text(resetLabel(window) ?? "")
+            Text(reset?.text ?? "")
                 .font(.system(size: 9).monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: 52, alignment: .trailing)
+                .foregroundStyle(reset?.isApprox == true ? AnyShapeStyle(.tertiary)
+                                                         : AnyShapeStyle(.secondary))
+                .lineLimit(1)
+                // "~6d 23h 58m"까지 한 줄 수용 (52에서는 d-포맷이 줄바꿈/잘림).
+                .frame(width: 60, alignment: .trailing)
         }
         .padding(.leading, 14)
     }
 
-    /// resetsAt 있으면 정확 카운트다운, 없으면 근사 리셋(`~` 표기), 둘 다 없으면 nil.
-    private func resetLabel(_ window: LimitWindow) -> String? {
+    /// resetsAt(미래)이 있으면 정확 카운트다운, 없거나 이미 지났으면 근사 리셋(`~` + 톤 다운),
+    /// 둘 다 없으면 nil.
+    private func resetLabel(_ window: LimitWindow) -> (text: String, isApprox: Bool)? {
         let now = Date()
-        if let resets = window.resetsAt {
-            return EventEngine.countdown(to: resets, from: now)
+        if let resets = window.resetsAt, resets > now {
+            return (EventEngine.countdown(to: resets, from: now), false)
         }
         if let approx = approxReset(window.kind) {
-            return "~" + EventEngine.countdown(to: approx, from: now)
+            return ("~" + EventEngine.countdown(to: approx, from: now), true)
         }
         return nil
     }
