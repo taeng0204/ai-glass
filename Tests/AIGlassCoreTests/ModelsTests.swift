@@ -8,6 +8,12 @@ import Testing
     #expect(e.totalTokens == 1350)
 }
 
+@Test func serviceDisplayNames() {
+    #expect(ServiceID.claude.displayName == "Claude")
+    #expect(ServiceID.codex.displayName == "Codex")
+    #expect(ServiceID.gemini.displayName == "Gemini")
+}
+
 @Test func iso8601ParsesFractionalAndPlain() {
     #expect(ISO8601.date("2026-06-10T10:52:36.739Z") != nil)
     #expect(ISO8601.date("2026-06-10T10:52:36Z") != nil)

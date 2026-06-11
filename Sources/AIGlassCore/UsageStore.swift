@@ -169,6 +169,20 @@ public final class UsageStore {
         return byProject.map { (project: $0.key, tokens: $0.value) }.sorted { $0.tokens > $1.tokens }
     }
 
+    /// project별·서비스별 토큰 합계 (total 내림차순). project == nil 이벤트는 제외.
+    public func projectServiceBreakdown(days: Int, now: Date, calendar: Calendar = .current)
+        -> [(project: String, byService: [ServiceID: Int], total: Int)] {
+        let cutoff = calendar.date(byAdding: .day, value: -days, to: now)!
+        var byProject: [String: [ServiceID: Int]] = [:]
+        for e in events where e.timestamp >= cutoff {
+            guard let proj = e.project else { continue }
+            byProject[proj, default: [:]][e.service, default: 0] += e.totalTokens
+        }
+        return byProject.map { (project, byService) in
+            (project: project, byService: byService, total: byService.values.reduce(0, +))
+        }.sorted { $0.total > $1.total }
+    }
+
     /// 일별×서비스별 토큰 합계. 활동이 있는 조합만 반환 (tokens > 0).
     public func dailyTotalsByService(days: Int, now: Date, calendar: Calendar = .current) -> [(day: Date, service: ServiceID, tokens: Int)] {
         let today = calendar.startOfDay(for: now)

@@ -5,7 +5,7 @@ public enum ServiceID: String, CaseIterable, Codable, Sendable, Identifiable {
     public var id: String { rawValue }
     public var displayName: String {
         switch self {
-        case .claude: return "Claude Code"
+        case .claude: return "Claude"
         case .codex: return "Codex"
         case .gemini: return "Gemini"
         }

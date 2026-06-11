@@ -45,13 +45,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let store = UsageStore()
     let settings = AppSettings()
     var statusItem: NSStatusItem?
-    var popover: NSPopover?
+    var dashboardPanel: DashboardPanelController?
     let hudState = HUDState()
     let eventEngine = EventEngine()
     var hudController: HUDPanelController?
     var watcher: DirectoryWatcher?
     var hotKey: GlobalHotKey?
     let notifier = Notifier()
+    /// Keychain 토큰 메모리 캐시 — 매 폴링마다 Keychain 다이얼로그가 뜨는 것을 막는다.
+    let claudeTokens = ClaudeTokenProvider(reader: { ClaudeCredentials.fromKeychain() })
+    /// 시간대별 1회 브리핑 엔진. lastFired는 UserDefaults에 저장/복원.
+    let briefingEngine = BriefingEngine()
+    /// 마지막 브리핑 평가 시각 — 5분에 1회만 evaluate.
+    private var lastBriefingEvalAt: Date = .distantPast
     /// SQLite 영구 통계 (30일 추이용). 실패 시 nil 허용.
     let statsStore: DailyStatsStore? = {
         let dir = FileManager.default.homeDirectoryForCurrentUser
@@ -78,15 +84,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         statusItem = item
 
-        let pop = NSPopover()
-        pop.behavior = .transient
-        pop.contentViewController = NSHostingController(rootView: DashboardView(store: store, statsStore: statsStore))
-        popover = pop
+        dashboardPanel = DashboardPanelController(
+            store: store,
+            statsStore: statsStore,
+            onRefresh: { [weak self] in self?.refresh() },
+            onClose: {})
 
         hudController = HUDPanelController(store: store, state: hudState, settings: settings) { [weak self] in
             self?.togglePopover()
         }
         hudController?.setVisible(settings.hudVisible)
+
+        restoreBriefingState()
 
         // 글로벌 단축키 ⌘⇧U → 팝오버 토글 (Carbon 이벤트는 메인 스레드)
         hotKey = GlobalHotKey { [weak self] in
@@ -150,10 +159,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func pollClaudeLimits() {
         Task { @MainActor in
-            guard let creds = ClaudeCredentials.fromKeychain() else { return }
-            guard let result = try? await ClaudeUsageAPI.fetch(token: creds.accessToken),
-                  result.statusCode / 100 == 2,
-                  let windows = result.windows else { return }
+            guard let token = claudeTokens.token() else { return }
+            guard let result = try? await ClaudeUsageAPI.fetch(token: token) else { return }
+            // 401: 토큰 거부 → 캐시 무효화(다음 폴링에서 Keychain 재조회).
+            if result.statusCode == 401 {
+                claudeTokens.invalidate()
+                return
+            }
+            guard result.statusCode / 100 == 2, let windows = result.windows else { return }
             store.setLimits(windows, for: .claude)
             updateStatusTitle()
             evaluateEvents()
@@ -167,6 +180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         updateStatusTitle()
         evaluateEvents()
         persistStatsIfDue()
+        evaluateBriefingIfDue()
     }
 
     /// 60초 디바운스로 최근 8일 이벤트 전체를 SQLite에 upsert (REPLACE 멱등).
@@ -176,6 +190,83 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard now.timeIntervalSince(lastUpsertAt) >= 60 else { return }
         lastUpsertAt = now
         statsStore.upsert(events: store.events, calendar: .utc)
+    }
+
+    // MARK: - 브리핑
+
+    private static func briefingKey(_ period: BriefingEngine.Period) -> String {
+        "aiglass.briefing.\(period.rawValue)"
+    }
+
+    /// UserDefaults에서 Period별 마지막 발화 시각을 복원해 엔진에 주입.
+    private func restoreBriefingState() {
+        let defaults = UserDefaults.standard
+        var restored: [BriefingEngine.Period: Date] = [:]
+        for period in BriefingEngine.Period.allCases {
+            if let date = defaults.object(forKey: Self.briefingKey(period)) as? Date {
+                restored[period] = date
+            }
+        }
+        briefingEngine.lastFired = restored
+    }
+
+    /// 5분에 1회만 브리핑을 평가한다(기존 30초 refresh 타이머에 편승).
+    private func evaluateBriefingIfDue() {
+        let now = Date()
+        guard now.timeIntervalSince(lastBriefingEvalAt) >= 5 * 60 else { return }
+        lastBriefingEvalAt = now
+
+        let data = makeBriefingData(now: now)
+        let before = briefingEngine.lastFired
+        guard let event = briefingEngine.evaluate(now: now, data: data) else { return }
+
+        hudState.show(event, duration: 10)
+        if settings.notificationsEnabled {
+            notifier.notify(title: event.title, subtitle: event.subtitle)
+        }
+        // lastFired 변경분만 UserDefaults에 저장.
+        let defaults = UserDefaults.standard
+        for (period, date) in briefingEngine.lastFired where before[period] != date {
+            defaults.set(date, forKey: Self.briefingKey(period))
+        }
+    }
+
+    /// 어제(statsStore)·오늘(store)에서 BriefingData를 구성한다.
+    private func makeBriefingData(now: Date) -> BriefingEngine.BriefingData {
+        let calendar = Calendar.current
+        var data = BriefingEngine.BriefingData()
+
+        // 어제: statsStore 일별 합계 + 비용(2일 - 1일 차).
+        if let statsStore {
+            let startOfToday = calendar.startOfDay(for: now)
+            guard let yesterday = calendar.date(byAdding: .day, value: -1, to: startOfToday) else {
+                return data
+            }
+            let rows = statsStore.dailyTotalsByService(days: 2, now: now, calendar: .utc)
+            data.yesterdayTokens = rows
+                .filter { calendar.isDate($0.day, inSameDayAs: yesterday) }
+                .reduce(0) { $0 + $1.tokens }
+            // 어제 1일 비용 = (최근 2일) - (오늘 1일).
+            data.yesterdayCost = max(0, statsStore.totalCost(days: 2, now: now, calendar: .utc)
+                                     - statsStore.totalCost(days: 1, now: now, calendar: .utc))
+            // 어제 top project는 projectBreakdown이 오늘 포함이라 부정확 → 생략(nil).
+        }
+
+        // 오늘: store.
+        let startOfToday = calendar.startOfDay(for: now)
+        let todayEvents = store.events.filter { $0.timestamp >= startOfToday }
+        data.todayTokens = store.todayTokens(now: now)
+        data.todayCost = CostEstimator.cost(of: todayEvents)
+
+        // 오늘 top service: 서비스별 토큰 합 최대, share = 그 서비스/오늘 전체.
+        var byService: [ServiceID: Int] = [:]
+        for e in todayEvents { byService[e.service, default: 0] += e.totalTokens }
+        let grand = byService.values.reduce(0, +)
+        if grand > 0, let top = byService.max(by: { $0.value < $1.value }) {
+            data.todayTopService = (service: top.key, share: Double(top.value) / Double(grand))
+        }
+
+        return data
     }
 
     @objc func statusItemClicked() {
@@ -245,12 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func togglePopover() {
-        guard let button = statusItem?.button, let popover else { return }
-        if popover.isShown {
-            popover.performClose(nil)
-        } else {
-            refresh()
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        }
+        guard let button = statusItem?.button else { return }
+        dashboardPanel?.toggle(relativeTo: button)
     }
 }

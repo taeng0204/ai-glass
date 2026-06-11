@@ -6,6 +6,7 @@ public struct HUDEvent: Equatable {
         case depletionRisk(ServiceID)        // 리셋 전 소진 임박
         case windowReset(ServiceID)
         case burnSpike
+        case briefing(BriefingEngine.Period)  // EventEngine과 무관 — HUDEvent 타입만 공유
     }
     public let kind: Kind
     public let title: String

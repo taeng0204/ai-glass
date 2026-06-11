@@ -58,7 +58,7 @@ final class HUDPanelController {
         }
         if let screen = NSScreen.main {
             let frame = screen.visibleFrame
-            panel.setFrameTopLeftPoint(NSPoint(x: frame.maxX - size.width - 8, y: frame.maxY - 2))
+            panel.setFrameTopLeftPoint(NSPoint(x: frame.maxX - size.width - 8, y: frame.maxY - 4))
         }
     }
 

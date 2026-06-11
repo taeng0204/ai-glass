@@ -7,7 +7,11 @@ public struct CodexParsed: Equatable {
 }
 
 public enum CodexLogParser {
-    /// session_meta 라인에서 cwd의 lastPathComponent를 반환.
+    /// 홈 디렉토리 경로 주입 (테스트용). nil이면 `NSHomeDirectory()`.
+    nonisolated(unsafe) public static var homeDirectoryOverride: String?
+
+    /// session_meta 라인에서 cwd → 프로젝트명을 반환.
+    /// cwd가 홈 디렉토리와 정확히 일치하면 "~", 아니면 lastPathComponent.
     /// type != "session_meta" 이거나 파싱 실패 시 nil.
     public static func parseSessionMeta(line: String) -> String? {
         guard !line.isEmpty,
@@ -17,6 +21,8 @@ public enum CodexLogParser {
               let payload = obj["payload"] as? [String: Any],
               let cwd = payload["cwd"] as? String
         else { return nil }
+        let home = homeDirectoryOverride ?? NSHomeDirectory()
+        if cwd == home { return "~" }
         let last = (cwd as NSString).lastPathComponent
         return last.isEmpty ? nil : last
     }
