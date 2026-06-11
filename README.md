@@ -44,7 +44,6 @@ curl -fsSL https://raw.githubusercontent.com/taeng0204/ai-glass/main/install.sh 
 
 <p align="center">
   <img src="docs/images/dashboard-overview.png" width="340" alt="대시보드">
-  <img src="docs/images/projects-tab.png" width="340" alt="프로젝트 탭">
 </p>
 
 <p align="center">
