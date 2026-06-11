@@ -257,7 +257,7 @@ struct HoverCard: View {
                     if idx == 0 {
                         header(service: service)
                     }
-                    metricRow(window, leading: idx == 0)
+                    metricRow(window)
                 }
             }
         }
@@ -276,7 +276,7 @@ struct HoverCard: View {
 
     /// 한 윈도우 줄: 라벨 + 게이지 + % + 리셋 카운트다운.
     /// leading=false면 헤더 아래 들여쓰기.
-    private func metricRow(_ window: LimitWindow, leading: Bool) -> some View {
+    private func metricRow(_ window: LimitWindow) -> some View {
         let percent = window.usedPercent
         let tint = Theme.statusColor(percent: percent)
         return HStack(spacing: 6) {
