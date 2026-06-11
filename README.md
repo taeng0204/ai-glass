@@ -42,9 +42,13 @@ curl -fsSL https://raw.githubusercontent.com/taeng0204/ai-glass/main/install.sh 
 | **재미** | 마일스톤 돌파 🎉 · 일일 신기록 🏆 · 사운드(옵션) — 통계도 중요하지만 감성도 중요하니까 |
 | **온보딩** | 첫 실행 시 웨이브 스타일·메뉴바 모드·에이전트를 라이브 프리뷰로 선택 |
 
-<p align="center">
-  <img src="docs/images/dashboard-overview.png" width="340" alt="대시보드">
-</p>
+## 스크린샷
+
+| 대시보드 메인 | HUD 확장 |
+|---|---|
+| <img src="docs/images/dashboard-overview.png" width="360" alt="대시보드 메인 — 에이전트별 사용량, 한도 경고, 오늘 토큰, 비용, 속도"> | <img src="docs/images/hud-expanded.png" width="300" alt="HUD 확장 — 에이전트별 5h, 주간, 일일 사용량"> |
+| 추이 차트 | 한도 알림 |
+| <img src="docs/images/dashboard-trends.png" width="360" alt="추이 차트 — 최근 7일 에이전트별 토큰 사용량"> | <img src="docs/images/limit-alert.png" width="260" alt="한도 임박 알림 — Claude 소진 임박 경고"> |
 
 <p align="center">
   <img src="docs/images/onboarding-waves.png" width="480" alt="온보딩 — 웨이브 스타일 선택">
