@@ -12,13 +12,39 @@ public final class UsageStore {
     /// 분 단위 토큰 합계 캐시 (key = epoch초 / 60). burn rate 계산용. 서비스별로 분리.
     private var minuteBuckets: [ServiceID: [Int: Int]] = [:]
 
+    /// 서비스·윈도우종류별 사용률(%) 시계열. `setLimits`에서 append되며 최근 60분만 유지.
+    /// 소진 예측(DepletionEstimator)의 입력으로 사용.
+    public private(set) var percentHistory: [ServiceID: [LimitWindow.Kind: [(date: Date, percent: Double)]]] = [:]
+
     /// 이벤트 보존 기간 (일). 이보다 오래된 이벤트는 ingest 시 무시.
     public static let retentionDays = 8
 
     public init() {}
 
     public func setLimits(_ windows: [LimitWindow], for service: ServiceID) {
+        setLimits(windows, for: service, at: Date())
+    }
+
+    /// 테스트용: 샘플 기록 시각을 주입할 수 있는 변형. 프로덕션은 `setLimits(_:for:)` 사용.
+    func setLimits(_ windows: [LimitWindow], for service: ServiceID, at sampleDate: Date) {
         limits[service] = windows
+        let trimCutoff = sampleDate.addingTimeInterval(-60 * 60)
+        for window in windows {
+            var series = percentHistory[service]?[window.kind] ?? []
+            series.append((date: sampleDate, percent: window.usedPercent))
+            series.removeAll { $0.date < trimCutoff }
+            percentHistory[service, default: [:]][window.kind] = series
+        }
+    }
+
+    /// 해당 서비스의 윈도우 중 **현재 사용률이 가장 높은** 윈도우의 시계열로 소진을 추정한다.
+    /// resetsAt은 그 윈도우의 값을 사용한다. 추정 불가 시 nil.
+    public func depletion(for service: ServiceID, now: Date) -> Depletion? {
+        guard let windows = limits[service], !windows.isEmpty else { return nil }
+        guard let top = windows.max(by: { $0.usedPercent < $1.usedPercent }) else { return nil }
+        guard let series = percentHistory[service]?[top.kind] else { return nil }
+        let samples = series.map { ($0.date, $0.percent) }
+        return DepletionEstimator.estimate(samples: samples, resetsAt: top.resetsAt, now: now)
     }
 
     public func addEvents(_ batch: [(event: TokenEvent, dedupKey: String?)]) {
@@ -161,6 +187,42 @@ public final class UsageStore {
             }
         }
         return result
+    }
+
+    /// 한 세션(from~to)의 요약 문자열을 만든다.
+    /// 형식: `"지난 세션: {tokens} tokens · 주로 {project} · ~${cost}"`.
+    /// 프로젝트가 없으면 그 절 생략, 추정 비용이 $0.01 미만이면 비용 절 생략.
+    /// 기간 내 해당 서비스 이벤트가 없으면 nil.
+    public func sessionSummary(service: ServiceID, from: Date, to: Date) -> String? {
+        let scoped = events.filter {
+            $0.service == service && $0.timestamp >= from && $0.timestamp <= to
+        }
+        guard !scoped.isEmpty else { return nil }
+
+        let tokens = scoped.reduce(0) { $0 + $1.totalTokens }
+        var parts = ["지난 세션: \(Self.formatTokens(tokens)) tokens"]
+
+        // 최다 프로젝트
+        var byProject: [String: Int] = [:]
+        for e in scoped { if let p = e.project { byProject[p, default: 0] += e.totalTokens } }
+        if let top = byProject.max(by: { $0.value < $1.value })?.key {
+            parts.append("주로 \(top)")
+        }
+
+        let cost = CostEstimator.cost(of: scoped)
+        if cost >= 0.01 {
+            parts.append(String(format: "~$%.2f", cost))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// 토큰 수를 K/M 단위로 축약한다.
+    static func formatTokens(_ n: Int) -> String {
+        switch n {
+        case 1_000_000...: return String(format: "%.1fM", Double(n) / 1_000_000)
+        case 1_000...: return String(format: "%.1fK", Double(n) / 1_000)
+        default: return "\(n)"
+        }
     }
 
     /// 최근 24h 중 활동이 있던 분 단위 버킷들의 평균 tokens/min (burn spike 기저선)

@@ -3,6 +3,7 @@ import Foundation
 public struct HUDEvent: Equatable {
     public enum Kind: Equatable {
         case limitThreshold(ServiceID, Int)  // 70 또는 90 교차
+        case depletionRisk(ServiceID)        // 리셋 전 소진 임박
         case windowReset(ServiceID)
         case burnSpike
     }
@@ -26,18 +27,26 @@ public final class EventEngine {
     public var spikeCooldown: TimeInterval = 30 * 60
     public var resetDropFloor: Double = 10  // 이 미만으로 떨어지면 리셋으로 간주
     public var resetDropFrom: Double = 30   // 직전 값이 이 이상이었을 때만
+    /// depletionRisk 서비스별 쿨다운 (기본 30분).
+    public var depletionCooldown: TimeInterval = 30 * 60
 
     private var lastPercent: [ServiceID: [LimitWindow.Kind: Double]] = [:]
     private var lastSpikeAt: Date = .distantPast
+    private var lastDepletionAt: [ServiceID: Date] = [:]
 
     public init() {}
 
     /// - Parameters:
     ///   - burnRate: `UsageStore.tokensPerMinute(windowMinutes: 10)` 값 (현재 분당 토큰 소모율)
     ///   - baseline: `UsageStore.activeBaselineRate()` 값 (평소 활동 시의 기준 소모율)
+    ///   - depletions: 서비스별 소진 예측. `willDepleteBeforeReset`이면 depletionRisk 발화 (서비스별 30분 쿨다운). 기본 `[:]`.
+    ///   - reportProvider: windowReset 발화 시 subtitle을 교체할 세션 요약 공급자. non-nil 문자열을 주면 그 값을 subtitle로 사용. 기본 nil.
+    /// 우선순위: threshold > depletionRisk > reset > spike.
     /// 참고: 임계 근처 오실레이션(71→69→71 재발화)은 의도된 MVP 단순화로 미보호.
     public func evaluate(limits: [ServiceID: [LimitWindow]],
-                         burnRate: Double, baseline: Double, now: Date) -> [HUDEvent] {
+                         burnRate: Double, baseline: Double, now: Date,
+                         depletions: [ServiceID: Depletion] = [:],
+                         reportProvider: ((ServiceID) -> String?)? = nil) -> [HUDEvent] {
         var thresholdEvents: [HUDEvent] = []
         var resetEvents: [HUDEvent] = []
 
@@ -59,13 +68,27 @@ public final class EventEngine {
                     }
                 }
                 if previous >= resetDropFrom, window.usedPercent < resetDropFloor {
+                    let defaultSubtitle = "\(window.kind.label) 한도가 리셋되었습니다"
+                    let subtitle = reportProvider?(service) ?? defaultSubtitle
                     resetEvents.append(HUDEvent(
                         kind: .windowReset(service),
                         title: "\(service.displayName) 새 윈도우 시작",
-                        subtitle: "\(window.kind.label) 한도가 리셋되었습니다",
+                        subtitle: subtitle,
                         percent: window.usedPercent))
                 }
             }
+        }
+
+        var depletionEvents: [HUDEvent] = []
+        for (service, depletion) in depletions where depletion.willDepleteBeforeReset {
+            let last = lastDepletionAt[service] ?? .distantPast
+            guard now.timeIntervalSince(last) >= depletionCooldown else { continue }
+            lastDepletionAt[service] = now
+            depletionEvents.append(HUDEvent(
+                kind: .depletionRisk(service),
+                title: "⚠️ \(service.displayName) 소진 임박",
+                subtitle: "이 속도면 \(Self.countdown(to: depletion.etaTo100, from: now)) 후 소진 — 리셋 전에 막힘",
+                percent: nil))
         }
 
         var spikeEvents: [HUDEvent] = []
@@ -80,7 +103,8 @@ public final class EventEngine {
                 percent: nil))
         }
 
-        return thresholdEvents + resetEvents + spikeEvents
+        // 우선순위: threshold > depletionRisk > reset > spike
+        return thresholdEvents + depletionEvents + resetEvents + spikeEvents
     }
 
     public static func countdown(to date: Date, from now: Date) -> String {

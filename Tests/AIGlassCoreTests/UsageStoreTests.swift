@@ -86,3 +86,45 @@ private func makeStore(now: Date) -> UsageStore {
     // 오늘 토큰 이벤트 2건 + gemini 오늘 1건 = 3
     #expect(store.todayRequests(now: now, calendar: .utc) == 3)
 }
+
+@MainActor @Test func sessionSummaryFormatsTokensProjectCost() {
+    let now = ISO8601.date("2026-06-10T12:00:00Z")!
+    let store = UsageStore()
+    func ev(minutesAgo: Double, project: String?, output: Int) -> (TokenEvent, String?) {
+        (TokenEvent(service: .claude, timestamp: now.addingTimeInterval(-minutesAgo * 60),
+                    model: "claude-opus-4-8", inputTokens: 0, outputTokens: output,
+                    cacheReadTokens: 0, cacheCreationTokens: 0, project: project), nil)
+    }
+    // opus output 25.0/MTok. 2M output → $50.00. 주로 ai-glass.
+    store.addEvents([
+        ev(minutesAgo: 30, project: "ai-glass", output: 1_500_000),
+        ev(minutesAgo: 60, project: "ai-glass", output: 500_000),
+        ev(minutesAgo: 90, project: "other", output: 200_000),
+    ])
+    let from = now.addingTimeInterval(-5 * 3600)
+    let s = try! #require(store.sessionSummary(service: .claude, from: from, to: now))
+    #expect(s.contains("2.2M tokens"))
+    #expect(s.contains("주로 ai-glass"))
+    #expect(s.contains("~$"))
+    #expect(s.hasPrefix("지난 세션:"))
+}
+
+@MainActor @Test func sessionSummaryNilWhenNoEvents() {
+    let now = ISO8601.date("2026-06-10T12:00:00Z")!
+    let store = UsageStore()
+    #expect(store.sessionSummary(service: .claude, from: now.addingTimeInterval(-3600), to: now) == nil)
+}
+
+@MainActor @Test func sessionSummaryOmitsProjectAndTinyCost() {
+    let now = ISO8601.date("2026-06-10T12:00:00Z")!
+    let store = UsageStore()
+    // 프로젝트 nil, 비용 극소(haiku 1000 input → $0.000001) → 두 절 모두 생략
+    let e = TokenEvent(service: .claude, timestamp: now.addingTimeInterval(-600),
+                       model: "claude-haiku", inputTokens: 1000, outputTokens: 0,
+                       cacheReadTokens: 0, cacheCreationTokens: 0, project: nil)
+    store.addEvents([(e, nil)])
+    let s = try! #require(store.sessionSummary(service: .claude, from: now.addingTimeInterval(-3600), to: now))
+    #expect(!s.contains("주로"))
+    #expect(!s.contains("~$"))
+    #expect(s.contains("tokens"))
+}
