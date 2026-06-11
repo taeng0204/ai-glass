@@ -11,7 +11,7 @@ import Testing
 @Test func serviceDisplayNames() {
     #expect(ServiceID.claude.displayName == "Claude")
     #expect(ServiceID.codex.displayName == "Codex")
-    #expect(ServiceID.gemini.displayName == "Gemini")
+    #expect(ServiceID.gemini.displayName == "Antigravity")
 }
 
 @Test func iso8601ParsesFractionalAndPlain() {

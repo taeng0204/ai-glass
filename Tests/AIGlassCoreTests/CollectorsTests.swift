@@ -62,6 +62,30 @@ private func stamped(_ template: String, secondsAgo: TimeInterval = 60) -> Strin
     #expect(store.events.count == 1) // dedup 키로 중복 적재 차단
 }
 
+/// 항목1 회귀 방지: session_meta 첫 줄이 4KB를 초과(긴 payload.instructions)해도
+/// 프로젝트명이 정상 부여돼야 한다. 수정 전(4KB 버퍼)에는 첫 줄 파싱 실패 → project nil.
+@MainActor @Test func codexCollectorParsesProjectWithLargeSessionMeta() throws {
+    let dir = try makeTempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    // ~8KB instructions 문자열 (AGENTS.md 모사) — JSON escape 안전한 문자만 사용
+    let bigInstructions = String(repeating: "ABCDEFGHIJ", count: 800) // 8000자
+    let sessionMeta = """
+    {"type":"session_meta","payload":{"cwd":"/Users/me/hack-nas","instructions":"\(bigInstructions)"}}
+    """
+    #expect(sessionMeta.utf8.count > 4096) // 첫 줄이 4KB 초과임을 보장
+
+    let file = dir.appendingPathComponent("rollout.jsonl")
+    let content = sessionMeta + "\n" + stamped(codexLine) + "\n"
+    try Data(content.utf8).write(to: file)
+
+    let store = UsageStore()
+    let collector = CodexCollector(root: dir)
+    collector.collect(into: store)
+    #expect(store.events.count == 1)
+    #expect(store.events.first?.project == "hack-nas") // 수정 전: nil
+}
+
 @MainActor @Test func geminiCollectorEstimatesDailyQuota() throws {
     let dir = try makeTempDir()
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -75,8 +99,41 @@ private func stamped(_ template: String, secondsAgo: TimeInterval = 60) -> Strin
     try Data(json.utf8).write(to: hashDir.appendingPathComponent("logs.json"))
 
     let store = UsageStore()
-    let collector = GeminiCollector(root: dir, dailyQuota: 100)
+    // historyFile은 존재하지 않는 경로로 지정해 실제 홈의 antigravity 히스토리 누출 방지
+    let collector = GeminiCollector(root: dir, dailyQuota: 100,
+                                    historyFile: dir.appendingPathComponent("nonexistent.jsonl"))
     collector.collect(into: store)
     #expect(store.geminiRequestDates.count == 1)
     #expect(store.limits[.gemini]?.first?.usedPercent == 1.0)
+}
+
+/// 항목2: GeminiCollector가 legacy logs.json + Antigravity history.jsonl 양쪽에서 요청을 합산.
+@MainActor @Test func geminiCollectorMergesLegacyAndAntigravity() throws {
+    let dir = try makeTempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let now = Date()
+
+    // legacy logs.json: 오늘 1건
+    let hashDir = dir.appendingPathComponent("abc123")
+    try FileManager.default.createDirectory(at: hashDir, withIntermediateDirectories: true)
+    let iso = ISO8601DateFormatter()
+    let legacy = """
+    [{"type":"user","timestamp":"\(iso.string(from: now))","message":"hi","messageId":0,"sessionId":"s"}]
+    """
+    try Data(legacy.utf8).write(to: hashDir.appendingPathComponent("logs.json"))
+
+    // antigravity history.jsonl: 오늘 2건
+    let ms = Int(now.timeIntervalSince1970 * 1000)
+    let history = """
+    {"display":"a","timestamp":\(ms),"workspace":"/Users/me/Desktop/dev/hack-nas"}
+    {"display":"b","timestamp":\(ms - 1000),"workspace":"/Users/me/Desktop/dev/ai-glass"}
+    """
+    let historyFile = dir.appendingPathComponent("history.jsonl")
+    try Data(history.utf8).write(to: historyFile)
+
+    let store = UsageStore()
+    let collector = GeminiCollector(root: dir, dailyQuota: 100, historyFile: historyFile)
+    collector.collect(into: store, now: now)
+    #expect(store.geminiRequestDates.count == 3) // 1 legacy + 2 antigravity
+    #expect(store.limits[.gemini]?.first?.usedPercent == 3.0) // 3/100 = 3%
 }

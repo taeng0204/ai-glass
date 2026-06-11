@@ -6,9 +6,9 @@ enum Theme {
 
     static func color(for service: ServiceID) -> Color {
         switch service {
-        case .claude: return Color(red: 0.85, green: 0.47, blue: 0.34)  // 테라코타 #D97757
-        case .codex: return Color(red: 0.063, green: 0.64, blue: 0.50)  // ChatGPT 그린 #10A37F
-        case .gemini: return Color(red: 0.26, green: 0.52, blue: 0.96)  // 구글 블루 #4285F4
+        case .claude: return Color(red: 0.93, green: 0.60, blue: 0.47)  // 테라코타 파스텔 #EE9978
+        case .codex: return Color(red: 0.31, green: 0.79, blue: 0.64)   // ChatGPT 그린 파스텔 #4FC9A3
+        case .gemini: return Color(red: 0.47, green: 0.66, blue: 0.97)  // 구글 블루 파스텔 #78A8F7
         }
     }
     static func statusColor(percent: Double) -> Color {

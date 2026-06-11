@@ -31,15 +31,24 @@ public final class CodexCollector {
     public init(root: URL) { self.root = root }
 
     /// 파일의 첫 라인만 직접 읽어 session_meta 파싱 시도. IncrementalLineReader와 독립.
+    /// session_meta 첫 줄은 payload.instructions(AGENTS.md 내용)로 수십 KB까지 커질 수 있어
+    /// 64KB 청크로 반복 읽으며 개행을 찾는다. 상한 1MB 초과 시 nil.
     private func readFirstLine(of file: URL) -> String? {
         guard let fh = FileHandle(forReadingAtPath: file.path) else { return nil }
         defer { try? fh.close() }
-        // 첫 라인은 대부분 짧지만 최대 4KB 읽어 개행 탐색
-        guard let data = try? fh.read(upToCount: 4096) else { return nil }
-        if let newline = data.firstIndex(of: UInt8(ascii: "\n")) {
-            return String(data: data[data.startIndex..<newline], encoding: .utf8)
+        let chunkSize = 64 * 1024
+        let maxBytes = 1024 * 1024
+        var buffer = Data()
+        while buffer.count < maxBytes {
+            guard let chunk = try? fh.read(upToCount: chunkSize), !chunk.isEmpty else { break }
+            buffer.append(chunk)
+            if let newline = buffer.firstIndex(of: UInt8(ascii: "\n")) {
+                return String(data: buffer[buffer.startIndex..<newline], encoding: .utf8)
+            }
         }
-        return String(data: data, encoding: .utf8)
+        // 상한 초과(개행 못 찾음) 시 nil, 그 외엔 전체를 한 줄로 간주
+        if buffer.count >= maxBytes { return nil }
+        return buffer.isEmpty ? nil : String(data: buffer, encoding: .utf8)
     }
 
     private func project(for file: URL) -> String? {
@@ -87,17 +96,27 @@ public final class CodexCollector {
 public final class GeminiCollector {
     private let root: URL
     private let dailyQuota: Int
+    /// Antigravity(agy) CLI 히스토리 파일. 작아서 매번 전체 재읽기.
+    private let historyFile: URL
 
-    public init(root: URL, dailyQuota: Int = 1000) {
+    public init(root: URL, dailyQuota: Int = 1000, historyFile: URL? = nil) {
         self.root = root
         self.dailyQuota = dailyQuota
+        self.historyFile = historyFile
+            ?? FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".gemini/antigravity-cli/history.jsonl")
     }
 
     public func collect(into store: UsageStore, now: Date = Date()) {
         var allDates: [Date] = []
+        // 기존 Gemini CLI 로그 (logs.json)
         for file in LogLocator.recentFiles(under: root, suffix: "logs.json", modifiedWithinDays: 8) {
             guard let data = try? Data(contentsOf: file) else { continue }
             allDates.append(contentsOf: GeminiLogParser.userMessageDates(jsonData: data))
+        }
+        // Antigravity 히스토리 (history.jsonl) 전체 재읽기 → 요청 날짜 합산
+        if let data = try? Data(contentsOf: historyFile) {
+            allDates.append(contentsOf: AntigravityLogParser.entries(jsonData: data).map(\.date))
         }
         store.setGeminiRequests(allDates)
         let window = GeminiLogParser.dailyWindow(requestDates: allDates, quota: dailyQuota, now: now)
