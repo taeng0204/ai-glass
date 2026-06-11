@@ -8,7 +8,7 @@ import Carbon.HIToolbox
 enum AIGlassMain {
     static func main() {
         if CommandLine.arguments.contains("--check-claude") {
-            guard let creds = ClaudeCredentials.fromKeychain() else {
+            guard let creds = ClaudeCredentials.fromKeychain(allowSecurityToolFallback: true) else {
                 print("Keychain에서 Claude Code 자격증명을 찾지 못했습니다.")
                 exit(0)
             }
@@ -347,7 +347,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         // 429: 초기 웜업/수동 진단이 겹쳐 API 제한에 걸리면 기존 표시를 유지하고 잠시 쉰다.
         if result.statusCode == 429 {
-            claudeLimitRetryAfter = Date().addingTimeInterval(60)
+            claudeLimitRetryAfter = Date().addingTimeInterval(5 * 60)
             claudeLimitsLoaded = !(store.limits[.claude]?.isEmpty ?? true)
             return false
         }
