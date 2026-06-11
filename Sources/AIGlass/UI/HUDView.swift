@@ -351,7 +351,8 @@ struct HoverCard: View {
             }
         }
         .padding(12)
-        .frame(width: 210, alignment: .leading)
+        // d-포맷 카운트다운("6d 23h 59m")까지 잘림 없이 들어가도록 210 → 226.
+        .frame(width: 226, alignment: .leading)
         .contentShape(RoundedRectangle(cornerRadius: 16))
         .onTapGesture { onTap() }
     }
@@ -416,9 +417,9 @@ struct HoverCard: View {
                 Text(cd)
                     .font(.system(size: 8.5).monospacedDigit())
                     .foregroundStyle(.secondary)
-                    .frame(width: 40, alignment: .trailing)
+                    .frame(width: 56, alignment: .trailing) // "6d 23h 59m" 수용
             } else {
-                Spacer(minLength: 0).frame(width: 40)
+                Spacer(minLength: 0).frame(width: 56)
             }
         }
         .padding(.leading, 14)

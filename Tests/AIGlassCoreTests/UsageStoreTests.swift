@@ -251,3 +251,31 @@ private func makeEvent(at date: Date, service: ServiceID = .claude) -> (event: T
     #expect(gap != nil)
     #expect(gap! >= 3 * 3600)
 }
+
+@MainActor @Test func comebackDetectedDespiteDedupedOldEventsInBatch() {
+    // rotation 재파싱: 배치에 이미 추가된(dedup) 옛 이벤트가 섞여도
+    // gap은 **실제 추가된** 이벤트의 min timestamp로 계산되어야 한다.
+    let now = Date()
+    let store = UsageStore()
+
+    func keyedEvent(at date: Date, key: String) -> (event: TokenEvent, dedupKey: String?) {
+        let e = TokenEvent(service: .claude, timestamp: date,
+                           model: "m", inputTokens: 1, outputTokens: 0,
+                           cacheReadTokens: 0, cacheCreationTokens: 0)
+        return (e, key)
+    }
+
+    // 첫 로드: now-5h (dedup 키 부여)
+    store.addEvents([keyedEvent(at: now.addingTimeInterval(-5 * 3600), key: "old")])
+    _ = store.consumeComebackGap()
+
+    // 두 번째 배치: 같은 옛 이벤트(dedup으로 버려짐) + 새 이벤트 now-1h
+    // 종전 구현은 batchMin = now-5h → gap = 0 → 미발화. 수정 후 addedMin = now-1h → gap = 4h.
+    store.addEvents([
+        keyedEvent(at: now.addingTimeInterval(-5 * 3600), key: "old"),
+        keyedEvent(at: now.addingTimeInterval(-1 * 3600), key: "new"),
+    ])
+    let gap = store.consumeComebackGap()
+    #expect(gap != nil)
+    #expect(gap! >= 4 * 3600 - 1)
+}
