@@ -57,6 +57,11 @@ final class HUDPanelController {
                NSScreen.screens.contains(where: { $0.visibleFrame.intersects(rect) }) {
                 panel.setContentSize(size)
                 panel.setFrameTopLeftPoint(NSPoint(x: rect.minX, y: rect.maxY))
+                // 새 패널 크기가 저장 당시보다 커진 경우 하단이 화면 밖(독 뒤)으로 빠지지 않게 클램프
+                if let screen = NSScreen.screens.first(where: { $0.visibleFrame.intersects(rect) }),
+                   panel.frame.minY < screen.visibleFrame.minY {
+                    panel.setFrameOrigin(NSPoint(x: panel.frame.minX, y: screen.visibleFrame.minY))
+                }
                 return
             }
         }
