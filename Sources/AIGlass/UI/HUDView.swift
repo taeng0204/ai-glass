@@ -191,6 +191,10 @@ struct WavePill: View {
     var showsCountdown: Bool = true
     /// 웨이브 스타일 (설정 waveStyle). 기본 펄스 바.
     var waveStyle: WaveStyle = .pulseBars
+    /// 메뉴바 등 좁은 컨테이너용 — 패딩 최소화, 빨강 글로우 생략. 기본 false(HUD 원형 유지).
+    var compact: Bool = false
+    /// true면 TimelineView 정지 (idle 시 에너지 절약 — 메뉴바는 상시 노출).
+    var paused: Bool = false
 
     /// limits가 있고 enabled인 서비스 — claude, codex, gemini 고정 순.
     private var rotationServices: [ServiceID] {
@@ -238,7 +242,7 @@ struct WavePill: View {
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: paused)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let level = max(store.activityLevel(now: context.date),
                             store.requestActivityLevel(now: context.date)) // 0...1
@@ -290,9 +294,10 @@ struct WavePill: View {
                 .frame(height: 16)
                 .clipped()
             }
-            .padding(.horizontal, 13)
-            .padding(.vertical, 8)
-            .shadow(color: .red.opacity(critical ? 0.55 * glow + 0.2 : 0), radius: glowRadius)
+            .padding(.horizontal, compact ? 4 : 13)
+            .padding(.vertical, compact ? 0 : 8)
+            .shadow(color: .red.opacity(!compact && critical ? 0.55 * glow + 0.2 : 0),
+                    radius: compact ? 0 : glowRadius)
             .animation(.spring(duration: 0.45), value: index)
         }
     }
