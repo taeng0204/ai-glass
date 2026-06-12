@@ -219,6 +219,26 @@ private func writeConvDB(dir: URL, convId: String,
     }
 }
 
+@Test func contentSignatureUsesMaxOfDBAndWALMtime() throws {
+    let dir = try makeTempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let dbPath = dir.appendingPathComponent("c.db").path
+    let old = Date(timeIntervalSinceNow: -3600)
+    let recent = Date(timeIntervalSinceNow: -60)
+    FileManager.default.createFile(atPath: dbPath, contents: Data([1]))
+    try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: dbPath)
+    // wal 없음 → db mtime (mtime 왕복 변환 오차 허용)
+    let sig1 = try #require(GeminiCollector.contentSignature(dbPath: dbPath))
+    #expect(abs(sig1.timeIntervalSince(old)) < 0.01)
+    // wal이 더 최신 → wal mtime (WAL 모드에선 쓰기가 wal에 먼저 감)
+    FileManager.default.createFile(atPath: dbPath + "-wal", contents: Data([1]))
+    try FileManager.default.setAttributes([.modificationDate: recent], ofItemAtPath: dbPath + "-wal")
+    let sig2 = try #require(GeminiCollector.contentSignature(dbPath: dbPath))
+    #expect(abs(sig2.timeIntervalSince(recent)) < 0.01)
+    // 파일 없음 → nil (항상 스캔)
+    #expect(GeminiCollector.contentSignature(dbPath: dir.appendingPathComponent("none.db").path) == nil)
+}
+
 @Test func geminiModelNameNormalization() {
     #expect(GeminiCollector.normalizeModel("Gemini 3.5 Flash (High)") == "gemini-3.5-flash")
     #expect(GeminiCollector.normalizeModel("Gemini 2.5 Pro") == "gemini-2.5-pro")

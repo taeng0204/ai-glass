@@ -106,6 +106,9 @@ public final class GeminiCollector {
     private var lastParsedIdx: [String: Int] = [:]
     /// 파일경로별 워크스페이스 캐시 (대화의 워크스페이스는 불변 — 성공만 캐시, 실패는 재시도).
     private var workspaceCache: [String: String] = [:]
+    /// 파일경로별 마지막 스캔 시점의 콘텐츠 시그니처(db·wal mtime 최댓값).
+    /// 변경 없는 db는 통째로 스킵 — refresh가 메인 스레드라 매 주기 전체 파싱은 프레임 드랍을 만든다.
+    private var lastScanSignature: [String: Date] = [:]
 
     public init(root: URL, dailyQuota: Int = 1000, historyFile: URL? = nil, logDir: URL? = nil,
                 conversationsDir: URL? = nil) {
@@ -149,42 +152,67 @@ public final class GeminiCollector {
 
     /// 최근 8일 mtime의 `<convId>.db`를 READONLY로 읽어 새 generation을 TokenEvent로 적재한다.
     private func collectConversationTokens(into store: UsageStore) {
-        // 폴백용 conversationId → 프로젝트 조인 (history.jsonl). 없으면 빈 맵.
-        var projectMap: [String: String] = [:]
-        if let data = try? Data(contentsOf: historyFile) {
-            projectMap = AntigravityLogParser.conversationWorkspaces(jsonData: data)
-        }
+        // 폴백용 conversationId → 프로젝트 조인 (history.jsonl). 필요할 때 1회만 읽음.
+        var projectMap: [String: String]?
 
         var batch: [(TokenEvent, String?)] = []
         for file in LogLocator.recentFiles(under: conversationsDir, suffix: ".db", modifiedWithinDays: 8) {
             let convId = (file.lastPathComponent as NSString).deletingPathExtension
             let path = file.path
-            // 프로젝트: db 내부 trajectory_metadata_blob의 워크스페이스 우선, history 조인 폴백.
-            var workspace = workspaceCache[path]
-            if workspace == nil {
-                workspace = AntigravityConversationParser.workspace(dbPath: path)
-                if let workspace { workspaceCache[path] = workspace }
-            }
-            let project = workspace ?? projectMap[convId]
+            // 파싱 전 시그니처를 떠서, 변경 없는 db는 통째로 스킵 (파싱 중 쓰기는 다음 주기에 잡힘).
+            let signature = Self.contentSignature(dbPath: path)
+            if let signature, lastScanSignature[path] == signature { continue }
             let prevIdx = lastParsedIdx[path] ?? -1
-            var maxIdx = prevIdx
-            for gen in AntigravityConversationParser.generations(dbPath: path) {
-                guard gen.idx > prevIdx else { continue }
-                if gen.idx > maxIdx { maxIdx = gen.idx }
-                let event = TokenEvent(
-                    service: .gemini,
-                    timestamp: gen.timestamp,
-                    model: Self.normalizeModel(gen.model),
-                    inputTokens: gen.inputTokens,
-                    outputTokens: gen.outputTokens,
-                    cacheReadTokens: 0,
-                    cacheCreationTokens: 0,
-                    project: project)
-                batch.append((event, "agy:\(convId):\(gen.idx)"))
+            let gens = AntigravityConversationParser.generations(dbPath: path, afterIdx: prevIdx)
+            if !gens.isEmpty {
+                // 프로젝트: db 내부 trajectory_metadata_blob의 워크스페이스 우선, history 조인 폴백.
+                var workspace = workspaceCache[path]
+                if workspace == nil {
+                    workspace = AntigravityConversationParser.workspace(dbPath: path)
+                    if let workspace { workspaceCache[path] = workspace }
+                }
+                if workspace == nil, projectMap == nil {
+                    projectMap = (try? Data(contentsOf: historyFile))
+                        .map { AntigravityLogParser.conversationWorkspaces(jsonData: $0) } ?? [:]
+                }
+                let project = workspace ?? projectMap?[convId]
+                var maxIdx = prevIdx
+                for gen in gens {
+                    if gen.idx > maxIdx { maxIdx = gen.idx }
+                    let event = TokenEvent(
+                        service: .gemini,
+                        timestamp: gen.timestamp,
+                        model: Self.normalizeModel(gen.model),
+                        inputTokens: gen.inputTokens,
+                        outputTokens: gen.outputTokens,
+                        cacheReadTokens: 0,
+                        cacheCreationTokens: 0,
+                        project: project)
+                    batch.append((event, "agy:\(convId):\(gen.idx)"))
+                }
+                lastParsedIdx[path] = maxIdx
             }
-            lastParsedIdx[path] = maxIdx
+            if let signature { lastScanSignature[path] = signature }
         }
         if !batch.isEmpty { store.addEvents(batch) }
+    }
+
+    /// db 콘텐츠 변경 감지용 시그니처 — WAL 모드에선 쓰기가 `-wal`에 먼저 가므로
+    /// `.db`와 `.db-wal` mtime의 최댓값을 쓴다. 조회 실패 시 nil(항상 스캔).
+    /// 메인 스레드에서 매 주기 호출되므로 FileManager 대신 가벼운 stat(2)를 쓴다.
+    nonisolated static func contentSignature(dbPath: String) -> Date? {
+        func mtime(_ path: String) -> Date? {
+            var st = stat()
+            guard stat(path, &st) == 0 else { return nil }
+            return Date(timeIntervalSince1970:
+                Double(st.st_mtimespec.tv_sec) + Double(st.st_mtimespec.tv_nsec) / 1_000_000_000)
+        }
+        switch (mtime(dbPath), mtime(dbPath + "-wal")) {
+        case let (d?, w?): return max(d, w)
+        case let (d?, nil): return d
+        case let (nil, w?): return w
+        case (nil, nil): return nil
+        }
     }
 
     /// Antigravity 표시명을 모델 식별자로 정규화한다.

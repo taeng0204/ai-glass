@@ -27,8 +27,9 @@ public enum AntigravityConversationParser {
     private static let SQLITE_OPEN_READONLY_FLAG: Int32 = 0x00000001 // SQLITE_OPEN_READONLY
 
     /// READONLY로 db를 열어 작은(size < 50000) gen_metadata 레코드만 파싱한다.
+    /// `afterIdx`보다 큰 idx만 SQL에서 거른다 (매 주기 전체 재파싱 방지).
     /// 열기 실패·잠금·파싱 실패 시 빈 배열(혹은 가능한 레코드만).
-    public static func generations(dbPath: String) -> [Generation] {
+    public static func generations(dbPath: String, afterIdx: Int = -1) -> [Generation] {
         guard FileManager.default.fileExists(atPath: dbPath) else { return [] }
         var db: OpaquePointer?
         // READONLY + (잠금 시) 50ms만 기다리고 포기.
@@ -39,10 +40,11 @@ public enum AntigravityConversationParser {
         defer { sqlite3_close(db) }
         sqlite3_busy_timeout(db, 50)
 
-        let sql = "SELECT idx, data FROM gen_metadata WHERE size < 50000"
+        let sql = "SELECT idx, data FROM gen_metadata WHERE size < 50000 AND idx > ?"
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
         defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int64(stmt, 1, Int64(afterIdx))
 
         var result: [Generation] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
