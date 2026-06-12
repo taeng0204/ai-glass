@@ -34,7 +34,7 @@ curl -fsSL https://raw.githubusercontent.com/taeng0204/ai-glass/main/install.sh 
 ## 기능
 
 - **플로팅 HUD**: 우상단 glass 알약, 웨이브 스타일 5종, 6초 서비스 로테이션, 호버 시 에이전트별 5h·주간 게이지+리셋 카운트다운, 드래그 이동, ⌘⇧E 고정 확장
-- **대시보드**: 메뉴바 ✦ 클릭 또는 ⌘⇧U, 개요(윈도우별 게이지·소진 예측·오늘 토큰/비용/속도), 추이(7/30일 스택 차트), 프로젝트(디렉토리별, 에이전트 색 구분), 기록(알림 히스토리, 호버 시 알약 리플레이)
+- **대시보드**: 메뉴바 ✦ 클릭 또는 ⌘⇧U, 개요(윈도우별 게이지·소진 예측·오늘 토큰/비용/속도), 추이(7/30일 스택 차트 + **사용 잔디** — GitHub 스타일 15주 히트맵), 프로젝트(디렉토리별, 에이전트 색 구분), 기록(알림 히스토리, 호버 시 알약 리플레이)
 - **이벤트**: 한도 70/90% 임박, 세션 리셋(직전 세션 요약), 토큰 급증, 소진 예측, 복귀 인사
 - **브리핑**: 아침(어제 요약+스트릭 🔥), 점심(오늘 페이스 예측), 저녁(오늘 요약), 월요일 주간 리포트 📊
 - **재미**: 마일스톤 돌파 🎉, 일일 신기록 🏆, 사운드 옵션
@@ -71,7 +71,7 @@ curl -fsSL https://raw.githubusercontent.com/taeng0204/ai-glass/main/install.sh 
 
 - **Claude**: `~/.claude/projects/**/*.jsonl` (토큰·모델·프로젝트) + Keychain OAuth → 사용량 API (정확한 5h/주간 %) — 최초 1회 Keychain 다이얼로그에서 **"항상 허용"** 권장
 - **Codex**: `~/.codex/sessions/**/*.jsonl` (rate limit 스냅샷 + 토큰 + 프로젝트)
-- **Antigravity**: `~/.gemini/antigravity-cli/history.jsonl` (일일 요청 수 추정 — 토큰 정보는 로그에 없음)
+- **Antigravity**: `~/.gemini/antigravity-cli/history.jsonl` (요청 수·프로젝트) + `conversations/*.db` (SQLite 대화 DB의 protobuf 메타데이터에서 입·출력 토큰을 **추정** — 비공개 포맷이라 방어적으로 파싱하며 결과는 추정치로 취급)
 - 일별 통계는 `~/Library/Application Support/AIGlass/stats.db` (SQLite)에 저장
 
 비용 표시는 **API 단가 환산 추정치**입니다 — 구독 플랜 실비가 아닙니다.
@@ -80,7 +80,7 @@ curl -fsSL https://raw.githubusercontent.com/taeng0204/ai-glass/main/install.sh 
 
 ```bash
 git clone https://github.com/taeng0204/ai-glass.git && cd ai-glass
-swift test                 # 단위 테스트 (140개)
+swift test                 # 단위 테스트 (161개)
 swift run AIGlass          # 개발 실행 (자동시작·알림은 .app 번들 전용)
 bash Scripts/make-app.sh   # .app 번들 생성 → build/AIGlass.app
 swift run AIGlass --check-claude   # Claude 한도 API 연결 진단

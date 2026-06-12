@@ -35,6 +35,35 @@ public enum AntigravityLogParser {
         return result
     }
 
+    /// conversationId → workspace 프로젝트명 매핑을 만든다.
+    /// 대화 DB(파일명=conversationId)의 토큰 이벤트에 프로젝트를 조인하는 데 쓴다.
+    /// workspace는 lastPathComponent(홈과 일치 시 "~"). workspace 없는 줄은 무시.
+    /// 같은 conversationId가 여러 번 나오면 마지막(가장 최근) 값으로 덮어쓴다.
+    public static func conversationWorkspaces(jsonData: Data) -> [String: String] {
+        guard let text = String(data: jsonData, encoding: .utf8) else { return [:] }
+        var result: [String: String] = [:]
+        let home = homeDirectoryOverride ?? NSHomeDirectory()
+        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty,
+                  let data = line.data(using: .utf8),
+                  let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+                  let convId = obj["conversationId"] as? String, !convId.isEmpty,
+                  let workspace = obj["workspace"] as? String, !workspace.isEmpty
+            else { continue }
+            let project: String
+            if workspace == home {
+                project = "~"
+            } else {
+                let last = (workspace as NSString).lastPathComponent
+                guard !last.isEmpty else { continue }
+                project = last
+            }
+            result[convId] = project
+        }
+        return result
+    }
+
     /// Antigravity CLI 로그에서 실제 모델 요청(`streamGenerateContent`) 시각을 추출한다.
     /// 로그 라인은 `I0611 23:20:50.123456 ... streamGenerateContent ...` 형식이고,
     /// glog 라인에는 연도가 없어 파일명(`cli-YYYYMMDD_HHMMSS.log`)의 연도를 주입받는다.

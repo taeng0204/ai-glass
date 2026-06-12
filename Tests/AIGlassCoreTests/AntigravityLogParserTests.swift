@@ -50,6 +50,33 @@ import Testing
     #expect(entries[0].project == "proj")
 }
 
+@Test func antigravityConversationWorkspacesJoinsByConversationId() {
+    let json = """
+    {"display":"a","timestamp":1780910341188,"workspace":"/Users/me/Desktop/dev/hack-nas","conversationId":"c1"}
+    {"display":"b","timestamp":1780910400000,"workspace":"/Users/me/Desktop/dev/ai-glass","conversationId":"c2"}
+    {"display":"c","timestamp":1780910500000,"workspace":"/Users/me/Desktop/dev/ai-glass","conversationId":"c2"}
+    """
+    let map = AntigravityLogParser.conversationWorkspaces(jsonData: Data(json.utf8))
+    #expect(map.count == 2)
+    #expect(map["c1"] == "hack-nas")
+    #expect(map["c2"] == "ai-glass")
+}
+
+@Test func antigravityConversationWorkspacesHandlesHomeAndMissing() {
+    let prev = AntigravityLogParser.homeDirectoryOverride
+    defer { AntigravityLogParser.homeDirectoryOverride = prev }
+    AntigravityLogParser.homeDirectoryOverride = "/Users/me"
+    let json = """
+    {"display":"a","timestamp":1780910341188,"workspace":"/Users/me","conversationId":"home"}
+    {"display":"b","timestamp":1780910400000,"conversationId":"noworkspace"}
+    {"display":"c","timestamp":1780910500000,"workspace":"/x/y"}
+    """
+    let map = AntigravityLogParser.conversationWorkspaces(jsonData: Data(json.utf8))
+    #expect(map["home"] == "~")
+    #expect(map["noworkspace"] == nil) // workspace 없음 → 엔트리 없음
+    #expect(map.count == 1)
+}
+
 @Test func antigravityParsesModelRequestLogLines() {
     let log = """
     I0611 23:20:50.123456 19134 http_helpers.go:183] URL: https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse Trace: 0x1

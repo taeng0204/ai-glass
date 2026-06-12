@@ -79,7 +79,7 @@ struct DashboardView: View {
                         .id(tabVisit)
                         .transition(Self.tabTransition)
                 case .trends:
-                    TrendsTab(store: store, statsStore: statsStore, settings: settings)
+                    TrendsTab(store: store, statsStore: statsStore, settings: settings, onResize: onResize)
                         .id(tabVisit)
                         .transition(Self.tabTransition)
                 case .projects:
@@ -339,18 +339,26 @@ private struct StatCard: View {
 
 private struct TrendsTab: View {
     let store: UsageStore
-    /// nil이면 30일 토글 숨김.
+    /// nil이면 30일/잔디 토글 숨김.
     var statsStore: DailyStatsStore? = nil
     let settings: AppSettings
+    /// 세그먼트 변경 시 잔디(높이 ≠ 차트)로 패널 크기가 달라지므로 리사이즈를 트리거한다.
+    var onResize: () -> Void = {}
     @State private var range: Range = .week
     /// 0.0→1.0으로 증가하며 BarMark y값에만 곱해진다.
     /// 축/눈금/레이아웃은 최종 데이터로 고정되어 움직이지 않는다.
     @State private var growFactor: Double = 0
 
     enum Range: String, CaseIterable, Identifiable {
-        case week = "7일", month = "30일"
+        case week = "7일", month = "30일", heatmap = "잔디"
         var id: String { rawValue }
-        var days: Int { self == .week ? 7 : 30 }
+        var days: Int {
+            switch self {
+            case .week: return 7
+            case .month: return 30
+            case .heatmap: return 105
+            }
+        }
     }
 
     /// id가 (day, service)로 안정적이어야 growFactor 변화 시 Chart가 같은 바로 인식해
@@ -372,8 +380,9 @@ private struct TrendsTab: View {
         switch range {
         case .week:
             rows = store.dailyTotalsByService(days: 7, now: Date())
-        case .month:
+        case .month, .heatmap:
             // 저장 포맷이 UTC day이므로 Calendar.utc로 조회해야 일관성 유지.
+            // 잔디 모드에선 차트를 그리지 않으므로 30일치만 조회(미사용).
             rows = statsStore?.dailyTotalsByService(days: 30, now: Date(), calendar: .utc) ?? []
         }
         return rows.filter { settings.enabledServices.contains($0.service) }
@@ -405,9 +414,17 @@ private struct TrendsTab: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .controlSize(.small)
-                .onChange(of: range) { _, _ in startGrow() }
+                .onChange(of: range) { _, _ in
+                    startGrow()
+                    // 잔디↔차트 높이가 달라 패널 크기 재조정 필요.
+                    onResize()
+                }
             }
-            chart
+            if range == .heatmap, let statsStore {
+                HeatmapView(statsStore: statsStore, enabledServices: settings.enabledServices)
+            } else {
+                chart
+            }
         }
         .onAppear { startGrow() }
     }
