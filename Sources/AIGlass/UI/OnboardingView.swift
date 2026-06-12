@@ -185,6 +185,7 @@ struct OnboardingView: View {
         case .burnRate: return "✦ 38K/m"
         case .maxPercent: return "✦ 49%"
         case .iconOnly: return "✦"
+        case .wavePill: return "✦ ≋ 63%"
         }
     }
 

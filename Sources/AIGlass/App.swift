@@ -204,11 +204,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// 마지막으로 set한 메뉴바 상태 키 — 동일 값 재설정 생략 (깜빡임 방지).
     private var lastMenubarKey: String?
+    /// 메뉴바 미니 알약 호스팅 뷰 — wavePill 모드에서만 non-nil.
+    private var menubarPillHost: NSView?
 
     /// 메뉴바 타이틀을 현재 모드/캐시값으로 갱신한다. 자동 로테이션 없음 — refresh에 편승.
     /// collect 호출 금지(store 캐시만 읽음), 이전 값과 동일하면 set 생략.
     func updateStatusTitle() {
         guard let button = statusItem?.button else { return }
+        if settings.menubarMode == .wavePill {
+            installMenubarPillIfNeeded(on: button)
+            // 웨이브 스타일 변경으로 폭이 달라졌으면 갱신 (동일 값 set 생략 — 깜빡임 방지).
+            let width = MenubarPill.width(for: settings.waveStyle) + 4
+            if statusItem?.length != width { statusItem?.length = width }
+            return
+        }
+        removeMenubarPillIfNeeded()
         let now = Date()
         switch settings.menubarMode {
         case .todayTokens:
@@ -236,7 +246,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 .foregroundColor: statusNSColor(percent: percent),
                 .font: NSFont.menuBarFont(ofSize: 0),
             ])
+
+        case .wavePill:
+            break // 위 early-return에서 처리됨
         }
+    }
+
+    /// wavePill 모드 진입 — 상태 버튼 위에 클릭-통과 호스팅 뷰를 얹는다 (멱등).
+    private func installMenubarPillIfNeeded(on button: NSStatusBarButton) {
+        guard menubarPillHost == nil else { return }
+        button.title = ""
+        button.attributedTitle = NSAttributedString(string: "") // iconOnly 잔존 색 제거
+        lastMenubarKey = "pill"
+        let host = ClickThroughHostingView(
+            rootView: MenubarPillView(store: store, settings: settings))
+        host.translatesAutoresizingMaskIntoConstraints = false
+        button.addSubview(host)
+        NSLayoutConstraint.activate([
+            host.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+            host.centerXAnchor.constraint(equalTo: button.centerXAnchor),
+        ])
+        menubarPillHost = host
+    }
+
+    /// wavePill 외 모드 — 호스팅 뷰 제거 + 가변 폭 복원 (멱등).
+    private func removeMenubarPillIfNeeded() {
+        guard let host = menubarPillHost else { return }
+        host.removeFromSuperview()
+        menubarPillHost = nil
+        statusItem?.length = NSStatusItem.variableLength
+        lastMenubarKey = nil // 텍스트 모드 타이틀 강제 재설정
     }
 
     /// 일반 텍스트 타이틀 set — 직전과 동일하면 생략.

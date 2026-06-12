@@ -120,6 +120,7 @@ struct SettingsView: View {
                         Text(style.label).tag(style)
                     }
                 }
+                .onChange(of: settings.waveStyle) { _, _ in onMenubarModeChange() }
                 HStack {
                     Spacer()
                     WaveStylePreview(style: settings.waveStyle)
