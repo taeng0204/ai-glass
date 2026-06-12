@@ -113,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             onRefresh: { [weak self] in self?.refresh() },
             onClose: {},
             onSettings: { [weak self] in self?.openSettings() },
-            onReplay: { [weak self] event in self?.hudState.show(event, duration: 2.5) })
+            onReplay: { [weak self] event in self?.flashHUD(event, duration: 2.5) })
 
         hudController = HUDPanelController(store: store, state: hudState, settings: settings) { [weak self] in
             self?.togglePopover()
@@ -314,11 +314,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// HUD 알림 표시 + 기록(EventLog) 적재. 호버 리플레이는 이 경로를 쓰지 않는다(기록 금지).
     func showHUD(_ event: HUDEvent, duration: TimeInterval = 6) {
-        hudState.show(event, duration: duration)
+        flashHUD(event, duration: duration)
         eventLog.append(event)
+    }
+
+    /// HUD가 숨김 상태여도 이벤트 카드가 HUD 위치에 잠깐 떠오르게 한다 (기록 없음 — 리플레이 공용).
+    func flashHUD(_ event: HUDEvent, duration: TimeInterval = 6) {
+        hudState.show(event, duration: duration)
         // 사운드: 알림성 kind일 때만 (설정 가드).
         if settings.funSoundEnabled, Self.isAlertingKind(event.kind) {
             SoundPlayer.play()
+        }
+        guard !settings.hudVisible else { return }
+        hudController?.setVisible(true)
+        // 카드 dismiss 애니메이션(0.45s) 여유를 두고 숨김. 그 사이 새 이벤트가 오면 유지
+        // (그 이벤트의 flashHUD가 자기 타이머로 다시 숨김).
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.6) { [weak self] in
+            guard let self, !self.settings.hudVisible,
+                  self.hudState.currentEvent == nil else { return }
+            self.hudController?.setVisible(false)
         }
     }
 

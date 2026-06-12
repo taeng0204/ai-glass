@@ -158,6 +158,9 @@ struct HUDView: View {
                 EventCard(event: event, warn: settings.warnThreshold, crit: settings.critThreshold)
                     .contentShape(RoundedRectangle(cornerRadius: 18))
                     .onTapGesture { tapped() }
+            } else if !settings.hudVisible {
+                // 알림 전용 모드 — 카드 dismiss 후 패널이 숨겨질 때까지 빈 상태 유지.
+                Color.clear.frame(width: 1, height: 1)
             } else if state.showsHoverCard {
                 HoverCard(store: store, enabled: enabled,
                           warn: settings.warnThreshold, crit: settings.critThreshold, onTap: tapped)
