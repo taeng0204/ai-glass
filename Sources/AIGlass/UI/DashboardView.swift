@@ -388,13 +388,6 @@ private struct TrendsTab: View {
         return rows.filter { settings.enabledServices.contains($0.service) }
     }
 
-    /// 일별 서비스 합산 최댓값 (y축 도메인 고정용).
-    private var maxDailyStack: Double {
-        let byDay = Dictionary(grouping: rawData, by: { $0.day })
-        let maxStack = byDay.values.map { $0.reduce(0) { $0 + $1.tokens } }.max() ?? 0
-        return Double(max(1, maxStack))
-    }
-
     /// 전체 날짜 범위 (x축 도메인 고정: 오늘 기준 days일 전 ~ 오늘).
     private var xDomain: ClosedRange<Date> {
         let now = Date()
@@ -441,9 +434,13 @@ private struct TrendsTab: View {
     }
 
     private var chart: some View {
-        let data = rawData.map { Point(day: $0.day, service: $0.service, tokens: $0.tokens) }
+        // rawData(이벤트 풀스캔/SQLite 조회)는 body 평가당 1회만 — y축 최댓값도 여기서 도출.
+        let rows = rawData
+        let data = rows.map { Point(day: $0.day, service: $0.service, tokens: $0.tokens) }
         let services = enabled
-        let maxY = maxDailyStack * 1.05
+        let byDay = Dictionary(grouping: rows, by: { $0.day })
+        let maxStack = byDay.values.map { $0.reduce(0) { $0 + $1.tokens } }.max() ?? 0
+        let maxY = Double(max(1, maxStack)) * 1.05
         let factor = growFactor
         return Chart(data) { item in
             BarMark(x: .value("날짜", item.day, unit: .day),

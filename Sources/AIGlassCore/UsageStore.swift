@@ -153,11 +153,27 @@ public final class UsageStore {
             .values.flatMap { $0 }.map(\.usedPercent).max() ?? 0
     }
 
+    /// 타임스탬프 → 해당 calendar의 자정. 시(epoch hour) 단위 캐시 —
+    /// 날 경계는 항상 시 경계에 정렬되므로 같은 epoch hour는 같은 날이다.
+    /// `Calendar.startOfDay`가 이벤트당 ~1µs라 수만 이벤트 풀스캔 시 수십 ms를 먹는데
+    /// (UI body 평가마다 호출됨), 캐시로 distinct hour 수만큼으로 줄인다.
+    private static func dayBucketer(calendar: Calendar) -> (Date) -> Date {
+        var cache: [Int: Date] = [:]
+        return { date in
+            let hour = Int(date.timeIntervalSince1970.rounded(.down)) / 3600
+            if let cached = cache[hour] { return cached }
+            let day = calendar.startOfDay(for: date)
+            cache[hour] = day
+            return day
+        }
+    }
+
     public func dailyTotals(days: Int, now: Date, calendar: Calendar = .current) -> [(day: Date, tokens: Int)] {
         let today = calendar.startOfDay(for: now)
+        let dayOf = Self.dayBucketer(calendar: calendar)
         var buckets: [Date: Int] = [:]
         for e in events {
-            buckets[calendar.startOfDay(for: e.timestamp), default: 0] += e.totalTokens
+            buckets[dayOf(e.timestamp), default: 0] += e.totalTokens
         }
         return (0..<days).reversed().map { offset in
             let day = calendar.date(byAdding: .day, value: -offset, to: today)!
@@ -289,10 +305,10 @@ public final class UsageStore {
     /// 차트 스택/시리즈가 렌더마다 뒤바뀌지 않도록 보장한다.
     public func dailyTotalsByService(days: Int, now: Date, calendar: Calendar = .current) -> [(day: Date, service: ServiceID, tokens: Int)] {
         let today = calendar.startOfDay(for: now)
+        let dayOf = Self.dayBucketer(calendar: calendar)
         var buckets: [Date: [ServiceID: Int]] = [:]
         for e in events {
-            let day = calendar.startOfDay(for: e.timestamp)
-            buckets[day, default: [:]][e.service, default: 0] += e.totalTokens
+            buckets[dayOf(e.timestamp), default: [:]][e.service, default: 0] += e.totalTokens
         }
         var result: [(day: Date, service: ServiceID, tokens: Int)] = []
         for offset in (0..<days).reversed() {

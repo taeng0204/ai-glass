@@ -77,8 +77,20 @@ public final class DailyStatsStore {
     public func upsert(events: [TokenEvent], calendar: Calendar = .current) {
         guard !events.isEmpty else { return }
         var grouped: [Key: Agg] = [:]
+        // DateFormatter.string이 이벤트당 ~수 µs라 수만 이벤트 × 60초 persist마다
+        // 메인 스레드를 수십 ms 막는다 — 시(epoch hour) 단위로 캐시한다
+        // (UTC 날 경계는 시 경계에 정렬되므로 같은 hour는 같은 day 문자열).
+        var dayCache: [Int: String] = [:]
         for e in events {
-            let key = Key(day: Self.dayFormatter.string(from: e.timestamp),
+            let hour = Int(e.timestamp.timeIntervalSince1970.rounded(.down)) / 3600
+            let day: String
+            if let cached = dayCache[hour] {
+                day = cached
+            } else {
+                day = Self.dayFormatter.string(from: e.timestamp)
+                dayCache[hour] = day
+            }
+            let key = Key(day: day,
                           service: e.service.rawValue,
                           model: e.model,
                           project: e.project ?? "")
