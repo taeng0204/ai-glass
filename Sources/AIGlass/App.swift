@@ -322,15 +322,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    /// flashHUD의 지연 숨김 타이머 — 새 flash가 오면 이전 타이머를 취소.
+    private var hudFlashHideTask: Task<Void, Never>?
+
     /// HUD가 숨김 상태여도 이벤트 카드가 HUD 위치에 잠깐 떠오르게 한다 (기록·사운드 없음 — 리플레이 공용).
     func flashHUD(_ event: HUDEvent, duration: TimeInterval = 6) {
         hudState.show(event, duration: duration)
         guard !settings.hudVisible else { return }
         hudController?.setVisible(true)
-        // 카드 dismiss 애니메이션(0.45s) 여유를 두고 숨김. 그 사이 새 이벤트가 오면 유지
-        // (그 이벤트의 flashHUD가 자기 타이머로 다시 숨김).
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.6) { [weak self] in
-            guard let self, !self.settings.hudVisible,
+        hudFlashHideTask?.cancel()
+        hudFlashHideTask = Task { @MainActor [weak self] in
+            // dismiss 애니메이션(0.45s) + 지연 발화 여유. 새 이벤트가 오면 위에서 취소된다.
+            try? await Task.sleep(for: .seconds(duration + 1.0))
+            guard !Task.isCancelled, let self, !self.settings.hudVisible,
                   self.hudState.currentEvent == nil else { return }
             self.hudController?.setVisible(false)
         }
