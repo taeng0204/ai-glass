@@ -263,8 +263,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         host.translatesAutoresizingMaskIntoConstraints = false
         button.addSubview(host)
         NSLayoutConstraint.activate([
-            host.centerYAnchor.constraint(equalTo: button.centerYAnchor),
-            host.centerXAnchor.constraint(equalTo: button.centerXAnchor),
+            host.topAnchor.constraint(equalTo: button.topAnchor),
+            host.bottomAnchor.constraint(equalTo: button.bottomAnchor),
+            host.leadingAnchor.constraint(equalTo: button.leadingAnchor),
+            host.trailingAnchor.constraint(equalTo: button.trailingAnchor),
         ])
         menubarPillHost = host
     }
