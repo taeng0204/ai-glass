@@ -4,7 +4,8 @@ import AIGlassCore
 
 /// 메뉴바 미니 알약 (이슈 #1) — HUD WavePill의 compact 변형을 NSStatusItem에 띄운다.
 enum MenubarPill {
-    /// 상태 아이템 고정 폭: 웨이브 영역 + 텍스트 영역(점 6 + 간격 + "100%" + 좌우 패딩) 52pt.
+    /// 상태 아이템 고정 폭: areaWidth 이후 텍스트 영역 52pt =
+    /// HStack 간격(8) + 점(6) + 점-% 간격(4) + "100%"(~26pt, 11pt bold mono) + compact 좌우 패딩(4×2).
     /// % 자릿수가 변해도 폭이 출렁이지 않도록 고정한다 (이웃 메뉴바 아이템 점프 방지).
     static func width(for style: WaveStyle) -> CGFloat {
         style.areaWidth + 52
