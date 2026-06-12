@@ -150,3 +150,83 @@ private func makeTempDB(records: [(idx: Int, data: Data, size: Int)]) throws -> 
     let gens = AntigravityConversationParser.generations(dbPath: "/nonexistent/path/x.db")
     #expect(gens.isEmpty)
 }
+
+@Test func conversationParserToleratesTrailingUnknownFields() throws {
+    // 실데이터 회귀: 정상 경로 뒤에 미지의 trailing 필드(field 81 등)가 붙은 blob —
+    // 부분-유지 파싱으로 여전히 레코드를 추출해야 한다.
+    var blob = buildGenMetadata(input: 1234, output: 56, epoch: 1_780_000_005, model: "Z")
+    blob.append(contentsOf: varintField(81, 7)) // top 레벨 trailing 미지 필드
+    let path = try makeTempDB(records: [(idx: 0, data: blob, size: blob.count)])
+    defer { try? FileManager.default.removeItem(atPath: path) }
+
+    let gens = AntigravityConversationParser.generations(dbPath: path)
+    #expect(gens.count == 1)
+    #expect(gens.first?.inputTokens == 1234)
+    #expect(gens.first?.outputTokens == 56)
+}
+
+// MARK: - workspace 추출
+
+/// 실측 경로 재현: top f1 { f1: uri, f4: branch }, f7: uri
+private func buildTrajectoryMetadata(uri: String, includeF1: Bool = true, includeF7: Bool = true) -> Data {
+    var top: [UInt8] = []
+    if includeF1 {
+        let f1 = lenField(1, Array(uri.utf8)) + lenField(4, Array("master".utf8))
+        top += lenField(1, f1)
+    }
+    if includeF7 {
+        top += lenField(7, Array(uri.utf8))
+    }
+    return Data(top)
+}
+
+/// trajectory_metadata_blob(id, data) 테이블이 있는 임시 db 생성.
+private func makeTempDBWithTrajectoryBlob(data: Data?) throws -> String {
+    let path = FileManager.default.temporaryDirectory
+        .appendingPathComponent("agy-traj-\(UUID().uuidString).db").path
+    var db: OpaquePointer?
+    #expect(sqlite3_open(path, &db) == SQLITE_OK)
+    defer { sqlite3_close(db) }
+    let create = "CREATE TABLE trajectory_metadata_blob(id INTEGER, data BLOB)"
+    #expect(sqlite3_exec(db, create, nil, nil, nil) == SQLITE_OK)
+    if let data {
+        let sql = "INSERT INTO trajectory_metadata_blob(id, data) VALUES (1, ?)"
+        var stmt: OpaquePointer?
+        #expect(sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK)
+        defer { sqlite3_finalize(stmt) }
+        _ = data.withUnsafeBytes { buf in
+            sqlite3_bind_blob(stmt, 1, buf.baseAddress, Int32(buf.count), SQLITE_TRANSIENT_T)
+        }
+        #expect(sqlite3_step(stmt) == SQLITE_DONE)
+    }
+    return path
+}
+
+@Test func workspaceExtractsDirectoryNameFromFileURI() throws {
+    let blob = buildTrajectoryMetadata(uri: "file:///Users/me/Desktop/dev/nypc")
+    let path = try makeTempDBWithTrajectoryBlob(data: blob)
+    defer { try? FileManager.default.removeItem(atPath: path) }
+    #expect(AntigravityConversationParser.workspace(dbPath: path) == "nypc")
+}
+
+@Test func workspaceFallsBackToF7WhenF1Missing() {
+    let blob = buildTrajectoryMetadata(uri: "file:///Users/me/dev/hack-nas", includeF1: false)
+    #expect(AntigravityConversationParser.parseWorkspace(data: blob) == "hack-nas")
+}
+
+@Test func workspaceAcceptsPlainAbsolutePath() {
+    let blob = buildTrajectoryMetadata(uri: "/Users/me/dev/tmp", includeF7: false)
+    #expect(AntigravityConversationParser.parseWorkspace(data: blob) == "tmp")
+}
+
+@Test func workspaceRejectsNonAbsolutePath() {
+    let blob = buildTrajectoryMetadata(uri: "not-a-path")
+    #expect(AntigravityConversationParser.parseWorkspace(data: blob) == nil)
+}
+
+@Test func workspaceReturnsNilForEmptyTableOrMissingDB() throws {
+    #expect(AntigravityConversationParser.workspace(dbPath: "/nonexistent/x.db") == nil)
+    let path = try makeTempDBWithTrajectoryBlob(data: nil)
+    defer { try? FileManager.default.removeItem(atPath: path) }
+    #expect(AntigravityConversationParser.workspace(dbPath: path) == nil)
+}

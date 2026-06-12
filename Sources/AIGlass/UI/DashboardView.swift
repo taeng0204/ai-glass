@@ -503,7 +503,7 @@ private struct ProjectsTab: View {
                 }
             }
             if !projects.isEmpty {
-                Text("Claude · Codex 기준 (Antigravity는 요청 수만 추적)")
+                Text("Antigravity 토큰은 추정치")
                     .font(.system(size: 9)).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }

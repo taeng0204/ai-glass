@@ -87,26 +87,46 @@ private func i32Field(_ field: Int, _ value: UInt32) -> [UInt8] {
     #expect(values == [10, 20, 30])
 }
 
-@Test func protoWireRejectsFieldZero() {
-    // tag 0 (field 0, wire 0) → 비정상, 빈 결과.
+@Test func protoWireStopsAtFieldZero() {
+    // tag 0 (field 0, wire 0) — 시작부터 비정상이면 빈 결과.
     let bytes: [UInt8] = [0x00, 0x05]
     let fields = ProtoWire.fields(Data(bytes))
     #expect(fields.isEmpty)
 }
 
-@Test func protoWireRejectsHugeFieldNumber() {
-    // field 81 (> 80) → 비정상, 빈 결과.
+@Test func protoWireKeepsParsedFieldsBeforeHugeFieldNumber() {
+    // 정상 필드 뒤에 field 81 (> 80) — 거기서 멈추되 앞의 결과는 유지.
+    let bytes = varintField(2, 42) + varintField(81, 1)
+    let fields = ProtoWire.fields(Data(bytes))
+    if case .varint(let v) = fields[2]?.first { #expect(v == 42) }
+    else { Issue.record("expected parsed field before bail point") }
+    #expect(fields[81] == nil)
+}
+
+@Test func protoWireHugeFieldNumberAtStartReturnsEmpty() {
     let bytes = varintField(81, 1)
     let fields = ProtoWire.fields(Data(bytes))
     #expect(fields.isEmpty)
 }
 
-@Test func protoWireRejectsTruncatedLength() {
-    // len-delimited 길이가 남은 바이트를 초과 → 빈 결과.
-    var bytes = tag(5, 2) + varint(100) // 길이 100인데 페이로드 없음
+@Test func protoWireKeepsParsedFieldsBeforeTruncatedLength() {
+    // 정상 필드 뒤에 길이 초과 len-delimited — 앞의 결과는 유지.
+    var bytes = varintField(1, 7)
+    bytes += tag(5, 2) + varint(100) // 길이 100인데 페이로드 없음
     bytes += [0x01, 0x02]
     let fields = ProtoWire.fields(Data(bytes))
-    #expect(fields.isEmpty)
+    if case .varint(let v) = fields[1]?.first { #expect(v == 7) }
+    else { Issue.record("expected parsed field before bail point") }
+    #expect(fields[5] == nil)
+}
+
+@Test func protoWireKeepsParsedFieldsBeforeUnsupportedWireType() {
+    // 정상 필드 뒤에 group(wire 3) — 미지원 타입에서 멈추되 앞의 결과는 유지.
+    let bytes = varintField(3, 99) + tag(4, 3)
+    let fields = ProtoWire.fields(Data(bytes))
+    if case .varint(let v) = fields[3]?.first { #expect(v == 99) }
+    else { Issue.record("expected parsed field before bail point") }
+    #expect(fields[4] == nil)
 }
 
 @Test func protoWireEmptyDataReturnsEmpty() {
