@@ -156,6 +156,20 @@ public final class DailyStatsStore {
         }
     }
 
+    /// 일별 토큰 합계(서비스 합산). 최근 `days`일, day 오름차순.
+    /// `services`가 주어지면 해당 서비스만 합산(잔디 히트맵의 enabled 필터용). nil이면 전체.
+    /// 토큰이 0인 날은 행이 없으므로 생략된다(호출자가 빈 셀로 처리).
+    public func dailyTotals(days: Int, now: Date, calendar: Calendar = .current,
+                            services: Set<ServiceID>? = nil) -> [(day: Date, tokens: Int)] {
+        let byService = dailyTotalsByService(days: days, now: now, calendar: calendar)
+        var sums: [Date: Int] = [:]
+        for row in byService {
+            if let services, !services.contains(row.service) { continue }
+            sums[row.day, default: 0] += row.tokens
+        }
+        return sums.map { (day: $0.key, tokens: $0.value) }.sorted { $0.day < $1.day }
+    }
+
     /// project별 토큰 합계 (내림차순). 빈 프로젝트 문자열은 제외. 최근 `days`일.
     public func projectBreakdown(days: Int, now: Date, calendar: Calendar = .current) -> [(project: String, tokens: Int)] {
         let cutoff = cutoffDayString(days: days, now: now, calendar: calendar)

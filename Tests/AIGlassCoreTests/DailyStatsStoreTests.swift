@@ -90,6 +90,33 @@ private func tempDBPath() -> String {
     #expect(yRows.map(\.service) == [.claude, .gemini])
 }
 
+@MainActor @Test func dailyTotalsSumsServicesAndFiltersEnabled() {
+    let now = ISO8601.date("2026-06-10T12:00:00Z")!
+    let store = try! #require(DailyStatsStore(path: tempDBPath()))
+    let yesterday = now.addingTimeInterval(-24 * 3600)
+    let events = [
+        TokenEvent(service: .claude, timestamp: now, model: "m",
+                   inputTokens: 100, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0),
+        TokenEvent(service: .gemini, timestamp: now, model: "m",
+                   inputTokens: 50, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0),
+        TokenEvent(service: .codex, timestamp: yesterday, model: "m",
+                   inputTokens: 30, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0),
+    ]
+    store.upsert(events: events, calendar: .utc)
+
+    // services nil → 전체 합산. 오늘 = 100 + 50 = 150, 어제 = 30.
+    let all = store.dailyTotals(days: 7, now: now, calendar: .utc)
+    #expect(all.count == 2)
+    #expect(all.last?.tokens == 150)          // day 오름차순이므로 오늘이 마지막
+    #expect(all.first?.tokens == 30)          // 어제
+    for i in 1..<all.count { #expect(all[i - 1].day < all[i].day) }
+
+    // enabled 필터 — claude만 → 오늘 100, 어제(codex) 행은 제거.
+    let onlyClaude = store.dailyTotals(days: 7, now: now, calendar: .utc, services: [.claude])
+    #expect(onlyClaude.count == 1)
+    #expect(onlyClaude.first?.tokens == 100)
+}
+
 @MainActor @Test func totalCostUsesModelRates() {
     let now = ISO8601.date("2026-06-10T12:00:00Z")!
     let store = try! #require(DailyStatsStore(path: tempDBPath()))
