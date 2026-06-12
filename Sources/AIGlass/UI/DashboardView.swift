@@ -16,6 +16,8 @@ struct DashboardView: View {
     let settings: AppSettings
     /// 알림 기록 (옵셔널 — nil이면 기록 탭은 빈 상태).
     var eventLog: EventLog? = nil
+    /// 새 버전 배지 (옵셔널 — available일 때만 헤더에 ↓ 표시).
+    var updateState: UpdateState? = nil
     /// 톱니바퀴 → 설정 창 열기.
     var onSettings: () -> Void = {}
     /// 기록 행 hover → 알약이 그 알림으로 잠깐 모핑.
@@ -60,6 +62,18 @@ struct DashboardView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+
+                if let release = updateState?.available {
+                    Button {
+                        NSWorkspace.shared.open(release.url)
+                    } label: {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Theme.safeGreen)
+                    }
+                    .buttonStyle(.plain)
+                    .help("v\(release.version) 업데이트 받기")
+                }
 
                 Button(action: onSettings) {
                     Image(systemName: "gearshape")

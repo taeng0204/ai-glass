@@ -52,6 +52,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// ⌘⇧E — HUD 호버 카드 expand 고정 토글.
     var expandHotKey: GlobalHotKey?
     let notifier = Notifier()
+    /// 새 버전 배지 상태 (대시보드 헤더).
+    let updateState = UpdateState()
+    /// 새 버전 알림을 보낸 버전 — 버전당 1회만 발화 (재시작 간 영속).
+    private static let updateNotifiedVersionKey = "aiglass.updateNotifiedVersion"
     /// 오늘 누적 토큰 마일스톤 추적 (날짜 바뀌면 내부 리셋).
     let milestoneTracker = MilestoneTracker()
     /// 신기록 알림을 보낸 날짜(UTC yyyy-MM-dd) — 하루 1회만 발화. UserDefaults에 영속화
@@ -105,6 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             statsStore: statsStore,
             settings: settings,
             eventLog: eventLog,
+            updateState: updateState,
             onRefresh: { [weak self] in self?.refresh() },
             onClose: {},
             onSettings: { [weak self] in self?.openSettings() },
@@ -157,6 +162,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         startInitialClaudeLimitWarmup()
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.pollClaudeLimits() }
+        }
+
+        // 새 버전 확인: 시작 15초 후 1회(네트워크/UI 워밍업 뒤) + 이후 24시간마다.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+            self?.checkForUpdates()
+        }
+        Timer.scheduledTimer(withTimeInterval: 24 * 3600, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.checkForUpdates() }
         }
 
         // 첫 실행 온보딩: 미완료면 약간의 지연 후 띄운다(메뉴바/HUD 자리잡은 뒤).
@@ -358,6 +371,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         updateStatusTitle()
         evaluateEvents()
         return true
+    }
+
+    /// GitHub 최신 릴리스를 확인해 새 버전이면 대시보드 배지를 켜고, 버전당 1회 알림을 보낸다.
+    /// 자동 설치는 하지 않는다. swift run(번들 버전 없음)에서는 건너뜀.
+    func checkForUpdates() {
+        guard let current = Bundle.main.object(
+            forInfoDictionaryKey: "CFBundleShortVersionString") as? String else { return }
+        Task { @MainActor [weak self] in
+            guard let release = await UpdateChecker.fetchLatest(), let self else { return }
+            guard UpdateChecker.isNewer(release.version, than: current) else {
+                self.updateState.available = nil
+                return
+            }
+            self.updateState.available = release
+            if UserDefaults.standard.string(forKey: Self.updateNotifiedVersionKey) != release.version {
+                UserDefaults.standard.set(release.version, forKey: Self.updateNotifiedVersionKey)
+                self.notifier.notify(title: "AI Glass v\(release.version) 업데이트가 나왔어요",
+                                     subtitle: "대시보드의 ↓ 배지에서 받을 수 있어요")
+            }
+        }
     }
 
     func refresh() {

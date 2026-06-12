@@ -39,6 +39,7 @@ curl -fsSL https://raw.githubusercontent.com/taeng0204/ai-glass/main/install.sh 
 - **브리핑**: 아침(어제 요약+스트릭 🔥), 점심(오늘 페이스 예측), 저녁(오늘 요약), 월요일 주간 리포트 📊
 - **재미**: 마일스톤 돌파 🎉, 일일 신기록 🏆, 사운드 옵션
 - **온보딩**: 첫 실행 시 웨이브 스타일·메뉴바 모드·에이전트를 라이브 프리뷰로 선택
+- **업데이트 알림**: 새 버전이 나오면 알림 1회 + 대시보드 헤더에 ↓ 배지 (클릭 시 릴리스 페이지)
 
 ## 스크린샷
 
@@ -67,7 +68,7 @@ curl -fsSL https://raw.githubusercontent.com/taeng0204/ai-glass/main/install.sh 
 
 ## 데이터 소스 & 프라이버시
 
-모든 처리는 **로컬**에서 이루어집니다. 외부 네트워크 요청은 Claude 한도 조회용 Anthropic 사용량 API 호출 단 하나이며, 텔레메트리는 없습니다.
+모든 처리는 **로컬**에서 이루어집니다. 외부 네트워크 요청은 둘뿐이며 — Claude 한도 조회용 Anthropic 사용량 API, 새 버전 확인용 GitHub Releases API(하루 1회) — 텔레메트리는 없습니다.
 
 - **Claude**: `~/.claude/projects/**/*.jsonl` (토큰·모델·프로젝트) + Keychain OAuth → 사용량 API (정확한 5h/주간 %) — 최초 1회 Keychain 다이얼로그에서 **"항상 허용"** 권장
 - **Codex**: `~/.codex/sessions/**/*.jsonl` (rate limit 스냅샷 + 토큰 + 프로젝트)
