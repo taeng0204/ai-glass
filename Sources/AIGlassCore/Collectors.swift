@@ -100,8 +100,13 @@ public final class GeminiCollector {
     private let historyFile: URL
     /// Antigravity(agy) CLI 로그 디렉토리. 실제 모델 호출 수 추정에 사용.
     private let logDir: URL
+    /// Antigravity 대화 DB 디렉토리 (`~/.gemini/antigravity-cli/conversations`).
+    private let conversationsDir: URL
+    /// 파일경로별 마지막으로 적재한 idx (인스턴스 캐시). idx > 캐시인 레코드만 새로 적재.
+    private var lastParsedIdx: [String: Int] = [:]
 
-    public init(root: URL, dailyQuota: Int = 1000, historyFile: URL? = nil, logDir: URL? = nil) {
+    public init(root: URL, dailyQuota: Int = 1000, historyFile: URL? = nil, logDir: URL? = nil,
+                conversationsDir: URL? = nil) {
         self.root = root
         self.dailyQuota = dailyQuota
         self.historyFile = historyFile
@@ -110,6 +115,9 @@ public final class GeminiCollector {
         self.logDir = logDir
             ?? FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent(".gemini/antigravity-cli/log")
+        self.conversationsDir = conversationsDir
+            ?? FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".gemini/antigravity-cli/conversations")
     }
 
     public func collect(into store: UsageStore, now: Date = Date()) {
@@ -132,6 +140,59 @@ public final class GeminiCollector {
         store.setGeminiRequests(allDates)
         let window = GeminiLogParser.dailyWindow(requestDates: allDates, quota: dailyQuota, now: now)
         store.setLimits([window], for: .gemini)
+
+        // Antigravity 대화 DB에서 토큰 이벤트 적재 (추정치, 비공개 포맷).
+        collectConversationTokens(into: store)
+    }
+
+    /// 최근 8일 mtime의 `<convId>.db`를 READONLY로 읽어 새 generation을 TokenEvent로 적재한다.
+    private func collectConversationTokens(into store: UsageStore) {
+        // conversationId → 프로젝트 조인 (history.jsonl). 없으면 빈 맵.
+        var projectMap: [String: String] = [:]
+        if let data = try? Data(contentsOf: historyFile) {
+            projectMap = AntigravityLogParser.conversationWorkspaces(jsonData: data)
+        }
+
+        var batch: [(TokenEvent, String?)] = []
+        for file in LogLocator.recentFiles(under: conversationsDir, suffix: ".db", modifiedWithinDays: 8) {
+            let convId = (file.lastPathComponent as NSString).deletingPathExtension
+            let project = projectMap[convId]
+            let path = file.path
+            let prevIdx = lastParsedIdx[path] ?? -1
+            var maxIdx = prevIdx
+            for gen in AntigravityConversationParser.generations(dbPath: path) {
+                guard gen.idx > prevIdx else { continue }
+                if gen.idx > maxIdx { maxIdx = gen.idx }
+                let event = TokenEvent(
+                    service: .gemini,
+                    timestamp: gen.timestamp,
+                    model: Self.normalizeModel(gen.model),
+                    inputTokens: gen.inputTokens,
+                    outputTokens: gen.outputTokens,
+                    cacheReadTokens: 0,
+                    cacheCreationTokens: 0,
+                    project: project)
+                batch.append((event, "agy:\(convId):\(gen.idx)"))
+            }
+            lastParsedIdx[path] = maxIdx
+        }
+        if !batch.isEmpty { store.addEvents(batch) }
+    }
+
+    /// Antigravity 표시명을 모델 식별자로 정규화한다.
+    /// "Gemini 3.5 Flash (High)" → "gemini-3.5-flash" (괄호 제거 → 소문자 → 공백→하이픈).
+    nonisolated static func normalizeModel(_ display: String) -> String {
+        // 괄호 그룹 제거 (예: "(High)").
+        var s = ""
+        var depth = 0
+        for ch in display {
+            if ch == "(" { depth += 1; continue }
+            if ch == ")" { if depth > 0 { depth -= 1 }; continue }
+            if depth == 0 { s.append(ch) }
+        }
+        let lowered = s.lowercased()
+        let collapsed = lowered.split(separator: " ", omittingEmptySubsequences: true).joined(separator: "-")
+        return collapsed.isEmpty ? "antigravity" : collapsed
     }
 
     private func antigravityModelRequestDates() -> [Date] {

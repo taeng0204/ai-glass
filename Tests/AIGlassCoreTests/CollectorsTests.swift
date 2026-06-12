@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import Testing
 @testable import AIGlassCore
 
@@ -175,4 +176,120 @@ private func stamped(_ template: String, secondsAgo: TimeInterval = 60) -> Strin
     collector.collect(into: store, now: now)
     #expect(store.geminiRequestDates.count == 3)
     #expect(store.limits[.gemini]?.first?.usedPercent == 3.0)
+}
+
+// MARK: - Antigravity 대화 DB 토큰 통합 (B1-4)
+
+private func agyVarint(_ value: UInt64) -> [UInt8] {
+    var v = value, bytes: [UInt8] = []
+    repeat { var b = UInt8(v & 0x7F); v >>= 7; if v != 0 { b |= 0x80 }; bytes.append(b) } while v != 0
+    return bytes
+}
+private func agyTag(_ field: Int, _ wt: Int) -> [UInt8] { agyVarint(UInt64((field << 3) | wt)) }
+private func agyVarintField(_ field: Int, _ value: UInt64) -> [UInt8] { agyTag(field, 0) + agyVarint(value) }
+private func agyLenField(_ field: Int, _ payload: [UInt8]) -> [UInt8] {
+    agyTag(field, 2) + agyVarint(UInt64(payload.count)) + payload
+}
+private func agyGenBlob(input: Int, output: Int, epoch: Int, model: String) -> Data {
+    let f4 = agyVarintField(2, UInt64(input)) + agyVarintField(3, UInt64(output))
+    let f9 = agyLenField(4, agyVarintField(1, UInt64(epoch)))
+    let f1 = agyLenField(4, f4) + agyLenField(9, f9) + agyLenField(21, Array(model.utf8))
+    return Data(agyLenField(1, f1))
+}
+
+private let SQLITE_TRANSIENT_C = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
+/// conversations 디렉토리에 `<convId>.db`를 만들어 gen_metadata 레코드를 넣는다.
+private func writeConvDB(dir: URL, convId: String,
+                         records: [(idx: Int, blob: Data)]) throws {
+    let path = dir.appendingPathComponent("\(convId).db").path
+    var db: OpaquePointer?
+    #expect(sqlite3_open(path, &db) == SQLITE_OK)
+    defer { sqlite3_close(db) }
+    #expect(sqlite3_exec(db, "CREATE TABLE gen_metadata(idx INTEGER, data BLOB, size INTEGER)", nil, nil, nil) == SQLITE_OK)
+    var stmt: OpaquePointer?
+    #expect(sqlite3_prepare_v2(db, "INSERT INTO gen_metadata(idx,data,size) VALUES (?,?,?)", -1, &stmt, nil) == SQLITE_OK)
+    defer { sqlite3_finalize(stmt) }
+    for r in records {
+        sqlite3_bind_int64(stmt, 1, Int64(r.idx))
+        _ = r.blob.withUnsafeBytes { b in sqlite3_bind_blob(stmt, 2, b.baseAddress, Int32(b.count), SQLITE_TRANSIENT_C) }
+        sqlite3_bind_int64(stmt, 3, Int64(r.blob.count))
+        #expect(sqlite3_step(stmt) == SQLITE_DONE)
+        sqlite3_reset(stmt)
+    }
+}
+
+@Test func geminiModelNameNormalization() {
+    #expect(GeminiCollector.normalizeModel("Gemini 3.5 Flash (High)") == "gemini-3.5-flash")
+    #expect(GeminiCollector.normalizeModel("Gemini 2.5 Pro") == "gemini-2.5-pro")
+    #expect(GeminiCollector.normalizeModel("antigravity") == "antigravity")
+}
+
+@MainActor @Test func geminiCollectorIngestsAntigravityConversationTokens() throws {
+    let dir = try makeTempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let now = Date()
+    let epoch = Int(now.timeIntervalSince1970) - 60
+
+    // conversations 디렉토리 + db 1개 (레코드 2개)
+    let convDir = dir.appendingPathComponent("conversations")
+    try FileManager.default.createDirectory(at: convDir, withIntermediateDirectories: true)
+    try writeConvDB(dir: convDir, convId: "conv-A", records: [
+        (idx: 0, blob: agyGenBlob(input: 3800, output: 231, epoch: epoch, model: "Gemini 3.5 Flash (High)")),
+        (idx: 1, blob: agyGenBlob(input: 1000, output: 50, epoch: epoch + 1, model: "Gemini 3.5 Flash (High)")),
+    ])
+
+    // history.jsonl: conv-A → ai-glass 프로젝트
+    let ms = Int(now.timeIntervalSince1970 * 1000)
+    let history = #"{"display":"x","timestamp":\#(ms),"workspace":"/Users/me/Desktop/dev/ai-glass","conversationId":"conv-A"}"#
+    let historyFile = dir.appendingPathComponent("history.jsonl")
+    try Data(history.utf8).write(to: historyFile)
+
+    let store = UsageStore()
+    let collector = GeminiCollector(root: dir, dailyQuota: 100, historyFile: historyFile,
+                                    logDir: dir.appendingPathComponent("missing-log"),
+                                    conversationsDir: convDir)
+    collector.collect(into: store, now: now)
+
+    let agyEvents = store.events.filter { $0.service == .gemini }
+    #expect(agyEvents.count == 2)
+    #expect(agyEvents.allSatisfy { $0.model == "gemini-3.5-flash" })
+    #expect(agyEvents.allSatisfy { $0.project == "ai-glass" })
+    #expect(agyEvents.reduce(0) { $0 + $1.inputTokens } == 4800)
+    #expect(agyEvents.reduce(0) { $0 + $1.outputTokens } == 281)
+    // 캐시 토큰은 0
+    #expect(agyEvents.allSatisfy { $0.cacheReadTokens == 0 && $0.cacheCreationTokens == 0 })
+
+    // 증분: 같은 db 재수집 → 중복 적재 없음 (lastParsedIdx 캐시 + dedup key)
+    collector.collect(into: store, now: now)
+    #expect(store.events.filter { $0.service == .gemini }.count == 2)
+}
+
+@MainActor @Test func geminiCollectorIncrementallyIngestsNewRecords() throws {
+    let dir = try makeTempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let now = Date()
+    let epoch = Int(now.timeIntervalSince1970) - 60
+    let convDir = dir.appendingPathComponent("conversations")
+    try FileManager.default.createDirectory(at: convDir, withIntermediateDirectories: true)
+    try writeConvDB(dir: convDir, convId: "conv-B", records: [
+        (idx: 0, blob: agyGenBlob(input: 100, output: 10, epoch: epoch, model: "M")),
+    ])
+
+    let store = UsageStore()
+    let collector = GeminiCollector(root: dir, dailyQuota: 100,
+                                    historyFile: dir.appendingPathComponent("none.jsonl"),
+                                    logDir: dir.appendingPathComponent("missing-log"),
+                                    conversationsDir: convDir)
+    collector.collect(into: store, now: now)
+    #expect(store.events.filter { $0.service == .gemini }.count == 1)
+
+    // 새 레코드 추가 후 재수집 → idx > 캐시만 추가
+    try FileManager.default.removeItem(at: convDir.appendingPathComponent("conv-B.db"))
+    try writeConvDB(dir: convDir, convId: "conv-B", records: [
+        (idx: 0, blob: agyGenBlob(input: 100, output: 10, epoch: epoch, model: "M")),
+        (idx: 1, blob: agyGenBlob(input: 200, output: 20, epoch: epoch + 1, model: "M")),
+    ])
+    collector.collect(into: store, now: now)
+    #expect(store.events.filter { $0.service == .gemini }.count == 2)
 }
