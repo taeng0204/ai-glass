@@ -10,6 +10,9 @@ import SQLite3
 /// - top `f1` → `f9` → `f4` → `f1` = epoch 초 타임스탬프
 /// - top `f1` → `f21` = 모델 표시명 ("Gemini 3.5 Flash (High)")
 ///
+/// `trajectory_metadata_blob(id, data)`의 단일 행에는 워크스페이스가 들어 있다:
+/// - top `f1` → `f1` = workspace URI ("file:///Users/…/dev/nypc"), top `f7`도 동일 값
+///
 /// 모든 파싱은 방어적 — 경로가 깨지면 해당 레코드를 조용히 스킵한다.
 /// **DB는 READONLY로만 연다** (agy 실행 중 잠금 가능) + busy_timeout 짧게.
 public enum AntigravityConversationParser {
@@ -53,6 +56,51 @@ public enum AntigravityConversationParser {
             }
         }
         return result
+    }
+
+    /// READONLY로 db를 열어 trajectory_metadata_blob에서 워크스페이스 디렉토리 이름을 추출한다.
+    /// (예: "file:///Users/me/dev/nypc" → "nypc") 추출 실패 시 nil.
+    public static func workspace(dbPath: String) -> String? {
+        guard FileManager.default.fileExists(atPath: dbPath) else { return nil }
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY_FLAG, nil) == SQLITE_OK else {
+            sqlite3_close(db)
+            return nil
+        }
+        defer { sqlite3_close(db) }
+        sqlite3_busy_timeout(db, 50)
+
+        let sql = "SELECT data FROM trajectory_metadata_blob LIMIT 1"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW,
+              let blobPtr = sqlite3_column_blob(stmt, 0) else { return nil }
+        let blobLen = Int(sqlite3_column_bytes(stmt, 0))
+        guard blobLen > 0 else { return nil }
+        return parseWorkspace(data: Data(bytes: blobPtr, count: blobLen))
+    }
+
+    /// trajectory_metadata_blob의 protobuf에서 워크스페이스 디렉토리 이름을 뽑는다.
+    /// 경로: top f1 → f1 (워크스페이스 URI), 폴백 top f7.
+    static func parseWorkspace(data: Data) -> String? {
+        let top = ProtoWire.fields(data)
+        var uri: String?
+        if case .bytes(let f1Data) = top[1]?.first {
+            let f1 = ProtoWire.fields(f1Data)
+            if case .bytes(let uriData) = f1[1]?.first {
+                uri = String(data: uriData, encoding: .utf8)
+            }
+        }
+        if uri == nil, case .bytes(let f7Data) = top[7]?.first {
+            uri = String(data: f7Data, encoding: .utf8)
+        }
+        guard var path = uri, !path.isEmpty else { return nil }
+        if path.hasPrefix("file://") { path = String(path.dropFirst("file://".count)) }
+        // URI일 수도 일반 경로일 수도 — 절대 경로만 신뢰한다.
+        guard path.hasPrefix("/") else { return nil }
+        let name = (path as NSString).lastPathComponent
+        return name.isEmpty || name == "/" ? nil : name
     }
 
     /// 단일 blob에서 Generation을 파싱한다. 토큰/타임스탬프 누락 시 nil.

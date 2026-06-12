@@ -104,6 +104,8 @@ public final class GeminiCollector {
     private let conversationsDir: URL
     /// 파일경로별 마지막으로 적재한 idx (인스턴스 캐시). idx > 캐시인 레코드만 새로 적재.
     private var lastParsedIdx: [String: Int] = [:]
+    /// 파일경로별 워크스페이스 캐시 (대화의 워크스페이스는 불변 — 성공만 캐시, 실패는 재시도).
+    private var workspaceCache: [String: String] = [:]
 
     public init(root: URL, dailyQuota: Int = 1000, historyFile: URL? = nil, logDir: URL? = nil,
                 conversationsDir: URL? = nil) {
@@ -147,7 +149,7 @@ public final class GeminiCollector {
 
     /// 최근 8일 mtime의 `<convId>.db`를 READONLY로 읽어 새 generation을 TokenEvent로 적재한다.
     private func collectConversationTokens(into store: UsageStore) {
-        // conversationId → 프로젝트 조인 (history.jsonl). 없으면 빈 맵.
+        // 폴백용 conversationId → 프로젝트 조인 (history.jsonl). 없으면 빈 맵.
         var projectMap: [String: String] = [:]
         if let data = try? Data(contentsOf: historyFile) {
             projectMap = AntigravityLogParser.conversationWorkspaces(jsonData: data)
@@ -156,8 +158,14 @@ public final class GeminiCollector {
         var batch: [(TokenEvent, String?)] = []
         for file in LogLocator.recentFiles(under: conversationsDir, suffix: ".db", modifiedWithinDays: 8) {
             let convId = (file.lastPathComponent as NSString).deletingPathExtension
-            let project = projectMap[convId]
             let path = file.path
+            // 프로젝트: db 내부 trajectory_metadata_blob의 워크스페이스 우선, history 조인 폴백.
+            var workspace = workspaceCache[path]
+            if workspace == nil {
+                workspace = AntigravityConversationParser.workspace(dbPath: path)
+                if let workspace { workspaceCache[path] = workspace }
+            }
+            let project = workspace ?? projectMap[convId]
             let prevIdx = lastParsedIdx[path] ?? -1
             var maxIdx = prevIdx
             for gen in AntigravityConversationParser.generations(dbPath: path) {
