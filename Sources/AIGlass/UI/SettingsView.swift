@@ -61,15 +61,13 @@ struct SettingsView: View {
     private var displayTab: some View {
         Form {
             Section("메뉴바") {
-                Picker("표시 모드", selection: $settings.menubarMode) {
-                    ForEach(MenubarMode.allCases) { mode in
-                        Text(mode.label).tag(mode)
-                    }
+                ForEach(MenubarItem.allCases) { item in
+                    Toggle(item.label, isOn: menubarItemBinding(for: item))
                 }
-                .onChange(of: settings.menubarMode) { _, _ in onMenubarModeChange() }
-                Text("메뉴바에 고정 표시할 정보를 고릅니다")
+                Text("켤 항목을 고르세요 — 모두 끄면 ✦ 아이콘만 표시됩니다")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            .onChange(of: settings.menubarItems) { _, _ in onMenubarModeChange() }
 
             Section("표시할 에이전트") {
                 ForEach(ServiceID.allCases) { service in
@@ -160,6 +158,16 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// 메뉴바 항목 토글 바인딩 — 켜고 끔 자유(빈 집합 허용 = ✦ 아이콘).
+    private func menubarItemBinding(for item: MenubarItem) -> Binding<Bool> {
+        Binding(
+            get: { settings.menubarItems.contains(item) },
+            set: { on in
+                if on { settings.menubarItems.insert(item) }
+                else { settings.menubarItems.remove(item) }
+            })
     }
 
     /// 서비스 표시 토글 바인딩 — 마지막 1개를 끄려는 시도는 무시(최소 1개 보장).
