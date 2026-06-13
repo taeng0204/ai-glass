@@ -225,7 +225,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             ])
             menubarHost = host
         }
-        statusItem?.length = NSStatusItem.variableLength
+        // 콘텐츠 폭 측정 — 별도 NSHostingController는 window 없이도 fittingSize가 정확하다.
+        // (엣지 고정된 표시 host의 fittingSize는 button 폭에 묶여 부정확하므로 측정엔 안 씀.)
+        let sizer = NSHostingController(rootView: MenubarContentView(store: store, settings: settings))
+        sizer.view.layoutSubtreeIfNeeded()
+        let width = sizer.view.fittingSize.width
+        statusItem?.length = width > 1 ? width : NSStatusItem.variableLength
     }
 
     static func formatTokens(_ n: Int) -> String {

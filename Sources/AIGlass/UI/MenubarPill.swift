@@ -76,6 +76,13 @@ struct MenubarContentView: View {
 }
 
 /// 클릭을 NSStatusBarButton으로 통과시키는 호스팅 뷰 — 메뉴바 클릭 → 대시보드 토글 유지.
+/// `onResize`로 레이아웃 완료 시점의 콘텐츠 크기를 알려, statusItem 폭을 정확히 맞춘다
+/// (외부에서 fittingSize 타이밍을 추측하지 않게 — 콘텐츠 변경 시 자동 갱신).
 final class ClickThroughHostingView<Content: View>: NSHostingView<Content> {
+    var onResize: ((CGSize) -> Void)?
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func layout() {
+        super.layout()
+        onResize?(fittingSize)
+    }
 }
