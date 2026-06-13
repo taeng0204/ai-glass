@@ -12,6 +12,9 @@ struct OnboardingView: View {
     /// HUD 패널 가시성 토글용 — 트랙 선택 시 hudVisible과 함께 실제 패널을 켜고 끈다.
     /// (settings.hudVisible 값만 바꾸면 패널은 안 따라온다 — SettingsView와 동일 패턴.)
     weak var hudController: HUDPanelController?
+    /// 웨이브·메뉴바 모드 변경 시 호출 — 메뉴바 상태 아이템 폭/표시를 즉시 갱신한다.
+    /// (모양은 @Observable로 바로 반영되지만 statusItem.length는 updateStatusTitle에서만 갱신됨.)
+    var onMenubarRefresh: () -> Void = {}
     /// 완료/닫기 시 호출 — onboardingCompleted=true 후 창을 닫는다.
     var onFinish: () -> Void
 
@@ -133,6 +136,7 @@ struct OnboardingView: View {
         let selected = settings.waveStyle == style
         return Button {
             settings.waveStyle = style
+            onMenubarRefresh() // 메뉴바 알약 모드면 폭이 스타일에 따라 달라져 즉시 갱신 필요
         } label: {
             HStack(spacing: 14) {
                 WaveStylePreview(style: style, chrome: false)
@@ -174,6 +178,7 @@ struct OnboardingView: View {
         let selected = settings.menubarMode == mode
         return Button {
             settings.menubarMode = mode
+            onMenubarRefresh() // 모드 전환(텍스트↔알약)·알약 폭 즉시 반영
         } label: {
             HStack(spacing: 14) {
                 // 미니 알약은 실제 웨이브를 라이브로(다른 모드는 메뉴바 텍스트 그대로).

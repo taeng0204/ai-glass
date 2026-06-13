@@ -188,6 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
         let view = OnboardingView(settings: settings, hudController: hudController,
+                                  onMenubarRefresh: { [weak self] in self?.updateStatusTitle() },
                                   onFinish: { [weak self] in
             self?.onboardingWindow?.close()
         })
