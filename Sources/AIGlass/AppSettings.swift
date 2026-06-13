@@ -28,6 +28,29 @@ enum MenubarMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// 메뉴바에 동시 표시할 수 있는 항목 (다중 선택). 고정 순서로 렌더된다.
+enum MenubarItem: String, CaseIterable, Identifiable {
+    case wave         // 미니 웨이브 알약
+    case todayTokens  // 오늘 누적 토큰 "612M"
+    case burnRate     // 소모 속도 "38K/m"
+    case maxPercent   // 최고 사용률 "49%"
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .wave: return "웨이브 알약"
+        case .todayTokens: return "오늘 누적 토큰"
+        case .burnRate: return "소모 속도 (t/min)"
+        case .maxPercent: return "최고 사용률 %"
+        }
+    }
+
+    /// 주어진 집합을 allCases 고정 순으로 정렬한 배열 (렌더 순서).
+    static func ordered(_ items: Set<MenubarItem>) -> [MenubarItem] {
+        allCases.filter { items.contains($0) }
+    }
+}
+
 /// HUD 알약 웨이브 스타일.
 enum WaveStyle: String, CaseIterable, Identifiable {
     /// 펄스 바 7개 (기본).
@@ -72,6 +95,7 @@ final class AppSettings {
         static let hudShowsPercent = "aiglass.hudShowsPercent"
         static let hudShowsCountdown = "aiglass.hudShowsCountdown"
         static let menubarMode = "aiglass.menubarMode"
+        static let menubarItems = "aiglass.menubarItems"
         static let waveStyle = "aiglass.waveStyle"
         static let funMilestone = "aiglass.funMilestone"
         static let funRecord = "aiglass.funRecord"
@@ -117,8 +141,24 @@ final class AppSettings {
         didSet { defaults.set(hudShowsCountdown, forKey: Key.hudShowsCountdown) }
     }
     /// 메뉴바 표시 모드 (MenubarMode rawValue). 기본 todayTokens.
+    /// (레거시 — menubarItems로 마이그레이션됨. 신규 코드는 menubarItems 사용.)
     var menubarMode: MenubarMode {
         didSet { defaults.set(menubarMode.rawValue, forKey: Key.menubarMode) }
+    }
+    /// 메뉴바에 동시 표시할 항목 집합 (다중). 빈 집합이면 ✦ 아이콘만. 기본 [.todayTokens].
+    var menubarItems: Set<MenubarItem> {
+        didSet { defaults.set(menubarItems.map(\.rawValue).sorted(), forKey: Key.menubarItems) }
+    }
+
+    /// 구 단일 모드 → 신 항목 집합 1:1 변환.
+    static func migratedItems(from mode: MenubarMode) -> Set<MenubarItem> {
+        switch mode {
+        case .todayTokens: return [.todayTokens]
+        case .burnRate:    return [.burnRate]
+        case .maxPercent:  return [.maxPercent]
+        case .iconOnly:    return []        // 빈 집합 = ✦ fallback
+        case .wavePill:    return [.wave]
+        }
     }
     /// HUD 알약 웨이브 스타일 (WaveStyle rawValue). 기본 pulseBars.
     var waveStyle: WaveStyle {
@@ -160,7 +200,8 @@ final class AppSettings {
         hudShowsPercent = defaults.object(forKey: Key.hudShowsPercent) as? Bool ?? true
         hudShowsCountdown = defaults.object(forKey: Key.hudShowsCountdown) as? Bool ?? true
         // 구버전 raw(todayAndBurn/serviceRotation 등) 불일치 시 기본값 폴백 = 마이그레이션.
-        menubarMode = MenubarMode(rawValue: defaults.string(forKey: Key.menubarMode) ?? "") ?? .todayTokens
+        let resolvedMode = MenubarMode(rawValue: defaults.string(forKey: Key.menubarMode) ?? "") ?? .todayTokens
+        menubarMode = resolvedMode
         waveStyle = WaveStyle(rawValue: defaults.string(forKey: Key.waveStyle) ?? "") ?? .pulseBars
         funMilestone = defaults.object(forKey: Key.funMilestone) as? Bool ?? true
         funRecord = defaults.object(forKey: Key.funRecord) as? Bool ?? true
@@ -171,5 +212,11 @@ final class AppSettings {
         let raw = defaults.stringArray(forKey: Key.enabledServices) ?? []
         let parsed = Set(raw.compactMap(ServiceID.init(rawValue:)))
         enabledServices = parsed.isEmpty ? Set(ServiceID.allCases) : parsed
+        // 메뉴바 항목: 신 포맷 키가 있으면 그대로, 없으면 구 menubarMode에서 1회 마이그레이션.
+        if let rawItems = defaults.stringArray(forKey: Key.menubarItems) {
+            menubarItems = Set(rawItems.compactMap(MenubarItem.init(rawValue:)))
+        } else {
+            menubarItems = Self.migratedItems(from: resolvedMode)
+        }
     }
 }
