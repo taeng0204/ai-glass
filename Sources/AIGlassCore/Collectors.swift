@@ -109,6 +109,10 @@ public final class GeminiCollector {
     /// 파일경로별 마지막 스캔 시점의 콘텐츠 시그니처(db·wal mtime 최댓값).
     /// 변경 없는 db는 통째로 스킵 — refresh가 메인 스레드라 매 주기 전체 파싱은 프레임 드랍을 만든다.
     private var lastScanSignature: [String: Date] = [:]
+    /// 요청 집계 소스(logs.json·log·history) 마지막 시그니처 + 그때 파싱한 날짜 캐시.
+    /// 변경 없으면 30초마다 대용량 로그 재파싱을 건너뛴다 (now 의존 dailyWindow만 재계산).
+    private var lastRequestSignature: Date?
+    private var cachedRequestDates: [Date] = []
 
     public init(root: URL, dailyQuota: Int = 1000, historyFile: URL? = nil, logDir: URL? = nil,
                 conversationsDir: URL? = nil) {
@@ -126,21 +130,30 @@ public final class GeminiCollector {
     }
 
     public func collect(into store: UsageStore, now: Date = Date()) {
-        var allDates: [Date] = []
-        // 기존 Gemini CLI 로그 (logs.json)
-        for file in LogLocator.recentFiles(under: root, suffix: "logs.json", modifiedWithinDays: 8) {
-            guard let data = try? Data(contentsOf: file) else { continue }
-            allDates.append(contentsOf: GeminiLogParser.userMessageDates(jsonData: data))
-        }
-
-        // Antigravity 실제 모델 호출 로그가 오늘 있으면 우선 사용. 없으면 히스토리 프롬프트 수로 폴백.
-        let agyModelRequests = antigravityModelRequestDates()
-        let startOfDay = Calendar.current.startOfDay(for: now)
-        let hasTodayModelRequests = agyModelRequests.contains { $0 >= startOfDay && $0 <= now }
-        if hasTodayModelRequests {
-            allDates.append(contentsOf: agyModelRequests)
-        } else if let data = try? Data(contentsOf: historyFile) {
-            allDates.append(contentsOf: AntigravityLogParser.entries(jsonData: data).map(\.date))
+        // 요청 소스(logs.json·log·history)가 직전과 동일하면 재파싱 스킵 — 캐시된 날짜 재사용.
+        // (dailyWindow는 now 의존이라 항상 재계산하지만, 무거운 파일 읽기·JSON 파싱만 건너뜀.)
+        let signature = requestSourcesSignature()
+        var allDates: [Date]
+        if let signature, signature == lastRequestSignature {
+            allDates = cachedRequestDates
+        } else {
+            allDates = []
+            // 기존 Gemini CLI 로그 (logs.json)
+            for file in LogLocator.recentFiles(under: root, suffix: "logs.json", modifiedWithinDays: 8) {
+                guard let data = try? Data(contentsOf: file) else { continue }
+                allDates.append(contentsOf: GeminiLogParser.userMessageDates(jsonData: data))
+            }
+            // Antigravity 실제 모델 호출 로그가 오늘 있으면 우선 사용. 없으면 히스토리 프롬프트 수로 폴백.
+            let agyModelRequests = antigravityModelRequestDates()
+            let startOfDay = Calendar.current.startOfDay(for: now)
+            let hasTodayModelRequests = agyModelRequests.contains { $0 >= startOfDay && $0 <= now }
+            if hasTodayModelRequests {
+                allDates.append(contentsOf: agyModelRequests)
+            } else if let data = try? Data(contentsOf: historyFile) {
+                allDates.append(contentsOf: AntigravityLogParser.entries(jsonData: data).map(\.date))
+            }
+            cachedRequestDates = allDates
+            lastRequestSignature = signature
         }
         store.setGeminiRequests(allDates)
         let window = GeminiLogParser.dailyWindow(requestDates: allDates, quota: dailyQuota, now: now)
@@ -201,18 +214,32 @@ public final class GeminiCollector {
     /// `.db`와 `.db-wal` mtime의 최댓값을 쓴다. 조회 실패 시 nil(항상 스캔).
     /// 메인 스레드에서 매 주기 호출되므로 FileManager 대신 가벼운 stat(2)를 쓴다.
     nonisolated static func contentSignature(dbPath: String) -> Date? {
-        func mtime(_ path: String) -> Date? {
-            var st = stat()
-            guard stat(path, &st) == 0 else { return nil }
-            return Date(timeIntervalSince1970:
-                Double(st.st_mtimespec.tv_sec) + Double(st.st_mtimespec.tv_nsec) / 1_000_000_000)
-        }
-        switch (mtime(dbPath), mtime(dbPath + "-wal")) {
+        switch (fileMtime(dbPath), fileMtime(dbPath + "-wal")) {
         case let (d?, w?): return max(d, w)
         case let (d?, nil): return d
         case let (nil, w?): return w
         case (nil, nil): return nil
         }
+    }
+
+    /// 단일 파일 mtime — FileManager보다 가벼운 stat(2). 없으면 nil.
+    nonisolated static func fileMtime(_ path: String) -> Date? {
+        var st = stat()
+        guard stat(path, &st) == 0 else { return nil }
+        return Date(timeIntervalSince1970:
+            Double(st.st_mtimespec.tv_sec) + Double(st.st_mtimespec.tv_nsec) / 1_000_000_000)
+    }
+
+    /// 요청 집계 소스(logs.json·log·history)의 mtime 최댓값 — 변경 없으면 재파싱 스킵용.
+    private func requestSourcesSignature() -> Date? {
+        var paths = LogLocator.recentFiles(under: root, suffix: "logs.json", modifiedWithinDays: 8).map(\.path)
+        paths += LogLocator.recentFiles(under: logDir, suffix: ".log", modifiedWithinDays: 8).map(\.path)
+        paths.append(historyFile.path)
+        var latest: Date?
+        for p in paths {
+            if let m = Self.fileMtime(p), latest == nil || m > latest! { latest = m }
+        }
+        return latest
     }
 
     /// Antigravity 표시명을 모델 식별자로 정규화한다.
