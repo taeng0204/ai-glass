@@ -9,6 +9,9 @@ enum OnboardingTrack { case hud, menubar }
 
 struct OnboardingView: View {
     @Bindable var settings: AppSettings
+    /// HUD 패널 가시성 토글용 — 트랙 선택 시 hudVisible과 함께 실제 패널을 켜고 끈다.
+    /// (settings.hudVisible 값만 바꾸면 패널은 안 따라온다 — SettingsView와 동일 패턴.)
+    weak var hudController: HUDPanelController?
     /// 완료/닫기 시 호출 — onboardingCompleted=true 후 창을 닫는다.
     var onFinish: () -> Void
 
@@ -369,14 +372,14 @@ struct OnboardingView: View {
         }
     }
 
-    /// 트랙 카드 — 탭하면 트랙 선택 + hudVisible 적용 + 다음 단계로 자동 진행.
+    /// 트랙 카드 — 탭하면 트랙 선택 + HUD 켜짐/꺼짐 즉시 반영. 진행은 "다음" 버튼으로.
     private func trackCard(_ t: OnboardingTrack, title: String, icon: String,
                            points: [String], warning: String?) -> some View {
         let selected = track == t
         return Button {
             track = t
             settings.hudVisible = (t == .hud)
-            withAnimation { step += 1 }
+            hudController?.setVisible(t == .hud)
         } label: {
             HStack(alignment: .top, spacing: 14) {
                 Image(systemName: icon)

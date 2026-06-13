@@ -187,7 +187,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             win.makeKeyAndOrderFront(nil)
             return
         }
-        let view = OnboardingView(settings: settings, onFinish: { [weak self] in
+        let view = OnboardingView(settings: settings, hudController: hudController,
+                                  onFinish: { [weak self] in
             self?.onboardingWindow?.close()
         })
         let hosting = NSHostingController(rootView: view)
