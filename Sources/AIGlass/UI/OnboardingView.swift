@@ -217,7 +217,8 @@ struct OnboardingView: View {
         case .wave: return ""
         case .todayTokens: return "✦ 612M"
         case .burnRate: return "✦ 38K/m"
-        case .maxPercent: return "✦ 49%"
+        case .usagePercent: return "● 63%"
+        case .resetCountdown: return "2h 15m"
         }
     }
 

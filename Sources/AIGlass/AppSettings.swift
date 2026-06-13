@@ -30,10 +30,11 @@ enum MenubarMode: String, CaseIterable, Identifiable {
 
 /// 메뉴바에 동시 표시할 수 있는 항목 (다중 선택). 고정 순서로 렌더된다.
 enum MenubarItem: String, CaseIterable, Identifiable {
-    case wave         // 미니 웨이브 알약
-    case todayTokens  // 오늘 누적 토큰 "612M"
-    case burnRate     // 소모 속도 "38K/m"
-    case maxPercent   // 최고 사용률 "49%"
+    case wave           // 미니 웨이브 알약
+    case todayTokens    // 오늘 누적 토큰 "612M"
+    case burnRate       // 소모 속도 "38K/m"
+    case usagePercent   // 사용률 — 6초마다 서비스 로테이션, 점+그 서비스 5h % "● 63%"
+    case resetCountdown // 리셋까지 남은 시간 (로테이션 서비스) "2h 15m"
 
     var id: String { rawValue }
     var label: String {
@@ -41,7 +42,8 @@ enum MenubarItem: String, CaseIterable, Identifiable {
         case .wave: return "웨이브 알약"
         case .todayTokens: return "오늘 누적 토큰"
         case .burnRate: return "소모 속도 (t/min)"
-        case .maxPercent: return "최고 사용률 %"
+        case .usagePercent: return "사용률 (서비스별)"
+        case .resetCountdown: return "리셋까지 시간"
         }
     }
 
@@ -155,7 +157,7 @@ final class AppSettings {
         switch mode {
         case .todayTokens: return [.todayTokens]
         case .burnRate:    return [.burnRate]
-        case .maxPercent:  return [.maxPercent]
+        case .maxPercent:  return [.usagePercent]  // 최고%(고정) → 사용률(로테이션)으로 대체
         case .iconOnly:    return []        // 빈 집합 = ✦ fallback
         case .wavePill:    return [.wave]
         }
