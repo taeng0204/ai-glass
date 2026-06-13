@@ -4,13 +4,24 @@ import AIGlassCore
 /// 첫 실행 온보딩 위저드 (6단계, 페이지 위저드 + 진행 점 + 이전/다음).
 /// 선택값은 즉시 AppSettings에 반영된다 — 위저드를 중간에 닫아도 그대로 유지.
 /// 마지막 "시작하기"에서 onboardingCompleted=true, 창 닫기(onFinish).
+/// 온보딩 사용 방식 트랙 — HUD 메인 vs 메뉴바 메인 (둘은 배타적으로 쓰인다).
+enum OnboardingTrack { case hud, menubar }
+
 struct OnboardingView: View {
     @Bindable var settings: AppSettings
+    /// HUD 패널 가시성 토글용 — 트랙 선택 시 hudVisible과 함께 실제 패널을 켜고 끈다.
+    /// (settings.hudVisible 값만 바꾸면 패널은 안 따라온다 — SettingsView와 동일 패턴.)
+    weak var hudController: HUDPanelController?
+    /// 웨이브·메뉴바 모드 변경 시 호출 — 메뉴바 상태 아이템 폭/표시를 즉시 갱신한다.
+    /// (모양은 @Observable로 바로 반영되지만 statusItem.length는 updateStatusTitle에서만 갱신됨.)
+    var onMenubarRefresh: () -> Void = {}
     /// 완료/닫기 시 호출 — onboardingCompleted=true 후 창을 닫는다.
     var onFinish: () -> Void
 
     @State private var step = 0
-    private let stepCount = 6
+    /// HUD/메뉴바 트랙 선택 (nil = 트랙 단계 이전). 영속화하지 않음 — hudVisible+menubarMode로 환원됨.
+    @State private var track: OnboardingTrack?
+    private let stepCount = 7
 
     var body: some View {
         VStack(spacing: 0) {
@@ -18,10 +29,11 @@ struct OnboardingView: View {
             Group {
                 switch step {
                 case 0: welcomeStep
-                case 1: waveStyleStep
-                case 2: menubarStep
-                case 3: agentsStep
-                case 4: funStep
+                case 1: trackStep
+                case 2: step2()
+                case 3: step3()
+                case 4: agentsStep
+                case 5: funStep
                 default: keychainStep
                 }
             }
@@ -50,6 +62,7 @@ struct OnboardingView: View {
                 if step < stepCount - 1 {
                     Button("다음") { withAnimation { step += 1 } }
                         .keyboardShortcut(.defaultAction)
+                        .disabled(step == 1 && track == nil)
                 } else {
                     Button("시작하기") { finish() }
                         .keyboardShortcut(.defaultAction)
@@ -97,7 +110,7 @@ struct OnboardingView: View {
 
     private var waveStyleStep: some View {
         VStack(spacing: 16) {
-            stepHeader("웨이브 스타일", "HUD 알약의 움직임을 고르세요. 탭하면 바로 적용됩니다.")
+            stepHeader("웨이브 스타일", waveStyleSubtitle)
             ScrollView {
                 VStack(spacing: 10) {
                     ForEach(WaveStyle.allCases) { style in
@@ -109,10 +122,21 @@ struct OnboardingView: View {
         }
     }
 
+    /// 트랙·메뉴바 모드에 따라 웨이브 단계 부제를 바꾼다.
+    private var waveStyleSubtitle: String {
+        if track == .menubar {
+            return settings.menubarMode == .wavePill
+                ? "메뉴바 알약의 움직임을 고르세요. 탭하면 바로 적용됩니다."
+                : "웨이브 스타일은 이렇게 다양해요 — 기본(펄스 바)으로 둬도 되고, 마음에 드는 걸 골라보세요."
+        }
+        return "HUD 알약의 움직임을 고르세요. 탭하면 바로 적용됩니다."
+    }
+
     private func waveStyleRow(_ style: WaveStyle) -> some View {
         let selected = settings.waveStyle == style
         return Button {
             settings.waveStyle = style
+            onMenubarRefresh() // 메뉴바 알약 모드면 폭이 스타일에 따라 달라져 즉시 갱신 필요
         } label: {
             HStack(spacing: 14) {
                 WaveStylePreview(style: style, chrome: false)
@@ -154,12 +178,21 @@ struct OnboardingView: View {
         let selected = settings.menubarMode == mode
         return Button {
             settings.menubarMode = mode
+            onMenubarRefresh() // 모드 전환(텍스트↔알약)·알약 폭 즉시 반영
         } label: {
             HStack(spacing: 14) {
-                Text(menubarPreviewText(mode))
-                    .font(.system(size: 13, weight: .medium).monospacedDigit())
-                    .foregroundStyle(.primary)
-                    .frame(width: 88, alignment: .leading)
+                // 미니 알약은 실제 웨이브를 라이브로(다른 모드는 메뉴바 텍스트 그대로).
+                Group {
+                    if mode == .wavePill {
+                        WaveStylePreview(style: settings.waveStyle, chrome: false)
+                            .fixedSize() // "49%"가 줄바꿈되지 않도록 자연 폭 유지
+                    } else {
+                        Text(menubarPreviewText(mode))
+                            .font(.system(size: 13, weight: .medium).monospacedDigit())
+                            .foregroundStyle(.primary)
+                    }
+                }
+                .frame(width: 108, alignment: .leading)
                 Text(mode.label)
                     .font(.body)
                     .foregroundStyle(.secondary)
@@ -179,12 +212,14 @@ struct OnboardingView: View {
         .buttonStyle(.plain)
     }
 
+    /// 텍스트 모드 프리뷰 (wavePill은 WaveStylePreview 라이브 렌더 — 여기 미포함).
     private func menubarPreviewText(_ mode: MenubarMode) -> String {
         switch mode {
         case .todayTokens: return "✦ 612M"
         case .burnRate: return "✦ 38K/m"
         case .maxPercent: return "✦ 49%"
         case .iconOnly: return "✦"
+        case .wavePill: return ""
         }
     }
 
@@ -311,6 +346,74 @@ struct OnboardingView: View {
                 .font(.callout).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
         }
+    }
+
+    // MARK: - 단계 분기 (트랙별 2·3단계 순서)
+
+    @ViewBuilder private func step2() -> some View {
+        if track == .menubar { menubarStep } else { waveStyleStep }
+    }
+    @ViewBuilder private func step3() -> some View {
+        if track == .menubar { waveStyleStep } else { menubarStep }
+    }
+
+    // MARK: - 1.5 트랙 선택
+
+    private var trackStep: some View {
+        VStack(spacing: 16) {
+            stepHeader("어떻게 보고 싶으세요?",
+                       "느낌 가는 쪽으로 고르세요 — 설정에서 언제든 바꿀 수 있어요.")
+            VStack(spacing: 12) {
+                trackCard(
+                    .hud, title: "HUD 알약", icon: "rectangle.on.rectangle.angled",
+                    points: ["원하는 곳에 배치", "세련된 liquid glass 스타일", "마우스 호버로 사용량 빠르게 확인"],
+                    warning: nil)
+                trackCard(
+                    .menubar, title: "메뉴바", icon: "menubar.rectangle",
+                    points: ["깔끔하게 메뉴바 안에", "다른 화면 방해 없음", "단축키로 사용량 확인"],
+                    warning: "HUD 알약은 표시되지 않아요")
+            }
+            Spacer()
+        }
+    }
+
+    /// 트랙 카드 — 탭하면 트랙 선택 + HUD 켜짐/꺼짐 즉시 반영. 진행은 "다음" 버튼으로.
+    private func trackCard(_ t: OnboardingTrack, title: String, icon: String,
+                           points: [String], warning: String?) -> some View {
+        let selected = track == t
+        return Button {
+            track = t
+            settings.hudVisible = (t == .hud)
+            hudController?.setVisible(t == .hud)
+        } label: {
+            HStack(alignment: .top, spacing: 14) {
+                Image(systemName: icon)
+                    .font(.system(size: 26))
+                    .foregroundStyle(selected ? Color.accentColor : .secondary)
+                    .frame(width: 40)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(title).font(.headline)
+                    ForEach(points, id: \.self) { p in
+                        Label(p, systemImage: "checkmark")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .labelStyle(.titleAndIcon)
+                    }
+                    if let warning {
+                        Label(warning, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.orange)
+                    }
+                }
+                Spacer()
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(selected ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.06),
+                        in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(selected ? Color.accentColor.opacity(0.5) : .clear, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - 공통

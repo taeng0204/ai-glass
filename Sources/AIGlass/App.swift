@@ -113,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             onRefresh: { [weak self] in self?.refresh() },
             onClose: {},
             onSettings: { [weak self] in self?.openSettings() },
-            onReplay: { [weak self] event in self?.hudState.show(event, duration: 2.5) })
+            onReplay: { [weak self] event in self?.flashHUD(event, duration: 2.5) })
 
         hudController = HUDPanelController(store: store, state: hudState, settings: settings) { [weak self] in
             self?.togglePopover()
@@ -187,7 +187,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             win.makeKeyAndOrderFront(nil)
             return
         }
-        let view = OnboardingView(settings: settings, onFinish: { [weak self] in
+        let view = OnboardingView(settings: settings, hudController: hudController,
+                                  onMenubarRefresh: { [weak self] in self?.updateStatusTitle() },
+                                  onFinish: { [weak self] in
             self?.onboardingWindow?.close()
         })
         let hosting = NSHostingController(rootView: view)
@@ -204,11 +206,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// 마지막으로 set한 메뉴바 상태 키 — 동일 값 재설정 생략 (깜빡임 방지).
     private var lastMenubarKey: String?
+    /// 메뉴바 미니 알약 호스팅 뷰 — wavePill 모드에서만 non-nil.
+    private var menubarPillHost: NSView?
 
     /// 메뉴바 타이틀을 현재 모드/캐시값으로 갱신한다. 자동 로테이션 없음 — refresh에 편승.
     /// collect 호출 금지(store 캐시만 읽음), 이전 값과 동일하면 set 생략.
     func updateStatusTitle() {
         guard let button = statusItem?.button else { return }
+        if settings.menubarMode == .wavePill {
+            installMenubarPillIfNeeded(on: button)
+            // 웨이브 스타일 변경으로 폭이 달라졌으면 갱신 (동일 값 set 생략 — 깜빡임 방지).
+            let width = MenubarPill.width(for: settings.waveStyle) + 4
+            if statusItem?.length != width { statusItem?.length = width }
+            return
+        }
+        removeMenubarPillIfNeeded()
         let now = Date()
         switch settings.menubarMode {
         case .todayTokens:
@@ -236,7 +248,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 .foregroundColor: statusNSColor(percent: percent),
                 .font: NSFont.menuBarFont(ofSize: 0),
             ])
+
+        case .wavePill:
+            break // 위 early-return에서 처리됨
         }
+    }
+
+    /// wavePill 모드 진입 — 상태 버튼 위에 클릭-통과 호스팅 뷰를 얹는다 (멱등).
+    private func installMenubarPillIfNeeded(on button: NSStatusBarButton) {
+        guard menubarPillHost == nil else { return }
+        button.title = ""
+        button.attributedTitle = NSAttributedString(string: "") // iconOnly 잔존 색 제거
+        lastMenubarKey = "pill"
+        let host = ClickThroughHostingView(
+            rootView: MenubarPillView(store: store, settings: settings))
+        host.translatesAutoresizingMaskIntoConstraints = false
+        button.addSubview(host)
+        NSLayoutConstraint.activate([
+            host.topAnchor.constraint(equalTo: button.topAnchor),
+            host.bottomAnchor.constraint(equalTo: button.bottomAnchor),
+            host.leadingAnchor.constraint(equalTo: button.leadingAnchor),
+            host.trailingAnchor.constraint(equalTo: button.trailingAnchor),
+        ])
+        menubarPillHost = host
+    }
+
+    /// wavePill 외 모드 — 호스팅 뷰 제거 + 가변 폭 복원 (멱등).
+    private func removeMenubarPillIfNeeded() {
+        guard let host = menubarPillHost else { return }
+        host.removeFromSuperview()
+        menubarPillHost = nil
+        statusItem?.length = NSStatusItem.variableLength
+        lastMenubarKey = nil // 텍스트 모드 타이틀 강제 재설정
     }
 
     /// 일반 텍스트 타이틀 set — 직전과 동일하면 생략.
@@ -273,13 +316,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    /// HUD 알림 표시 + 기록(EventLog) 적재. 호버 리플레이는 이 경로를 쓰지 않는다(기록 금지).
+    /// HUD 알림 표시 + 기록(EventLog) 적재 + 사운드. 호버 리플레이는 이 경로를 쓰지 않는다(기록·사운드 금지).
     func showHUD(_ event: HUDEvent, duration: TimeInterval = 6) {
-        hudState.show(event, duration: duration)
+        flashHUD(event, duration: duration)
         eventLog.append(event)
         // 사운드: 알림성 kind일 때만 (설정 가드).
         if settings.funSoundEnabled, Self.isAlertingKind(event.kind) {
             SoundPlayer.play()
+        }
+    }
+
+    /// flashHUD의 지연 숨김 타이머 — 새 flash가 오면 이전 타이머를 취소.
+    private var hudFlashHideTask: Task<Void, Never>?
+
+    /// HUD가 숨김 상태여도 이벤트 카드가 HUD 위치에 잠깐 떠오르게 한다 (기록·사운드 없음 — 리플레이 공용).
+    func flashHUD(_ event: HUDEvent, duration: TimeInterval = 6) {
+        hudState.show(event, duration: duration)
+        guard !settings.hudVisible else { return }
+        hudController?.setVisible(true)
+        hudFlashHideTask?.cancel()
+        hudFlashHideTask = Task { @MainActor [weak self] in
+            // dismiss 애니메이션(0.45s) + 지연 발화 여유. 새 이벤트가 오면 위에서 취소된다.
+            try? await Task.sleep(for: .seconds(duration + 1.0))
+            guard !Task.isCancelled, let self, !self.settings.hudVisible,
+                  self.hudState.currentEvent == nil else { return }
+            self.hudController?.setVisible(false)
         }
     }
 

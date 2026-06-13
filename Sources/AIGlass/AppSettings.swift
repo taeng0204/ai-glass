@@ -13,6 +13,8 @@ enum MenubarMode: String, CaseIterable, Identifiable {
     case maxPercent
     /// "✦"만 표시 (위험도 색).
     case iconOnly
+    /// HUD 웨이브 알약 미니 버전 (이슈 #1).
+    case wavePill
 
     var id: String { rawValue }
     var label: String {
@@ -21,6 +23,7 @@ enum MenubarMode: String, CaseIterable, Identifiable {
         case .burnRate: return "소모 속도 (t/min)"
         case .maxPercent: return "최고 사용률 %"
         case .iconOnly: return "아이콘만"
+        case .wavePill: return "미니 알약 (웨이브)"
         }
     }
 }
