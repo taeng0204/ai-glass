@@ -222,43 +222,47 @@ struct WaterFillWave: View {
     let input: WaveInput
     var body: some View {
         let level = max(0, min(1, input.percent / 100))
-        Canvas { ctx, size in
-            let waterTop = size.height * (1 - level)
-            // 찰랑임 진폭 = burn(level)에 반응. idle도 미세하게.
-            let amp = 0.6 + 2.4 * input.level
-            // 층 색 = 활동 서비스 가로 그라데이션(share 비례 구간) — 단색 평균은
-            // 보색이 섞이면 회색이 되어 "무색"으로 보인다. 그라데이션이라야 3색이 산다.
-            let grad = input.gGradient
-            // 2겹: 뒤(느린·연한) + 앞(빠른·진한). 불투명도는 ctx.opacity로.
-            drawWaveLayer(&ctx, size: size, top: waterTop, amp: amp * 0.7,
-                          speed: 1.4, phaseShift: 0, gradient: grad, opacity: 0.4)
-            drawWaveLayer(&ctx, size: size, top: waterTop, amp: amp,
-                          speed: 2.3, phaseShift: 1.7, gradient: grad, opacity: 0.75)
+        let topFrac = 1 - level
+        // 찰랑임 진폭 = burn(level)에 반응. idle도 미세하게.
+        let amp = 0.6 + 2.4 * input.level
+        // Canvas(CPU 래스터) 대신 Shape 2겹(GPU 렌더). 색은 가로 그라데이션(3색 유지).
+        ZStack {
+            // 뒤(느린·연한)
+            WaterLayerShape(t: input.t, topFrac: topFrac, amp: amp * 0.7, speed: 1.4, phaseShift: 0)
+                .fill(input.gradient)
+                .opacity(0.4)
+            // 앞(빠른·진한)
+            WaterLayerShape(t: input.t, topFrac: topFrac, amp: amp, speed: 2.3, phaseShift: 1.7)
+                .fill(input.gradient)
+                .opacity(0.75)
         }
         .frame(width: waveWidth, height: waveHeight)
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
     }
+}
 
-    private func drawWaveLayer(_ ctx: inout GraphicsContext, size: CGSize, top: CGFloat,
-                               amp: CGFloat, speed: Double, phaseShift: Double,
-                               gradient: Gradient, opacity: Double) {
+/// 워터필 한 겹 — 사인 파면 아래를 채우는 닫힌 Path (GPU 렌더용 Shape).
+struct WaterLayerShape: Shape {
+    let t: Double
+    let topFrac: Double   // 수면 높이: top = rect.height * topFrac
+    let amp: CGFloat
+    let speed: Double
+    let phaseShift: Double
+    func path(in rect: CGRect) -> Path {
+        let top = rect.height * topFrac
         var path = Path()
         let steps = 40
-        path.move(to: CGPoint(x: 0, y: size.height))
+        path.move(to: CGPoint(x: 0, y: rect.height))
         for i in 0...steps {
-            let x = size.width * CGFloat(i) / CGFloat(steps)
-            let phase = (Double(i) / Double(steps)) * 3 * .pi + input.t * speed + phaseShift
+            let x = rect.width * CGFloat(i) / CGFloat(steps)
+            let phase = (Double(i) / Double(steps)) * 3 * .pi + t * speed + phaseShift
             let y = top + amp * sin(phase)
             path.addLine(to: CGPoint(x: x, y: y))
         }
-        path.addLine(to: CGPoint(x: size.width, y: size.height))
+        path.addLine(to: CGPoint(x: rect.width, y: rect.height))
         path.closeSubpath()
-        var layer = ctx
-        layer.opacity = opacity
-        layer.fill(path, with: .linearGradient(gradient,
-                                               startPoint: .zero,
-                                               endPoint: CGPoint(x: size.width, y: 0)))
+        return path
     }
 }
 
@@ -305,30 +309,11 @@ struct OrbGlowWave: View {
 struct HeartbeatWave: View {
     let input: WaveInput
     var body: some View {
-        Canvas { ctx, size in
-            let midY = size.height / 2
-            // 활동은 진폭에만 반영 — 차분한 톤.
-            let amp = (size.height / 2 - 1.0) * (0.5 + 0.5 * input.amplitude)
-            // 고정 주기 연속 스크롤. 가변 주기 × t는 t(referenceDate 초)가 거대해
-            // 주기의 미세 변화에도 위상이 수백 사이클씩 점프 → 깜빡임. 상수로 고정한다.
-            let scrollT = input.t / 2.4
-            var path = Path()
-            let steps = 80
-            for i in 0...steps {
-                let frac = Double(i) / Double(steps)
-                let x = size.width * frac
-                // 각 x를 박동 주기 좌표로 (스크롤하여 흐름).
-                let cyc = (frac * 1.6 + scrollT).truncatingRemainder(dividingBy: 1.0)
-                let y = midY - amp * Self.ecg(cyc)
-                if i == 0 { path.move(to: CGPoint(x: x, y: y)) }
-                else { path.addLine(to: CGPoint(x: x, y: y)) }
-            }
-            ctx.stroke(path, with: .linearGradient(input.gGradient,
-                                                   startPoint: .zero,
-                                                   endPoint: CGPoint(x: size.width, y: 0)),
-                       style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
-        }
-        .frame(width: waveWidth, height: waveHeight)
+        // Canvas(CPU 래스터) 대신 Shape(GPU 렌더).
+        HeartbeatShape(t: input.t, amplitude: input.amplitude)
+            .stroke(input.gradient,
+                    style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
+            .frame(width: waveWidth, height: waveHeight)
     }
 
     /// 0...1 주기 좌표를 받아 매끄러운 심전도 파형을 반환.
@@ -349,29 +334,26 @@ struct HeartbeatWave: View {
     }
 }
 
-extension WaveInput {
-    /// Canvas용 Gradient (LinearGradient는 Canvas에서 못 쓰므로 Gradient로).
-    var gGradient: Gradient {
-        let active = ServiceID.allCases.compactMap { svc -> (ServiceID, Double)? in
-            guard let s = share[svc], s > 0 else { return nil }
-            return (svc, s)
+/// 심전도 라인 (GPU 렌더용 Shape — 기존 Canvas와 동일 기하).
+struct HeartbeatShape: Shape {
+    let t: Double
+    let amplitude: Double
+    func path(in rect: CGRect) -> Path {
+        let midY = rect.height / 2
+        let amp = (rect.height / 2 - 1.0) * (0.5 + 0.5 * amplitude)
+        // 고정 주기 연속 스크롤 (가변 주기 × t는 위상 점프 → 깜빡임).
+        let scrollT = t / 2.4
+        var path = Path()
+        let steps = 80
+        for i in 0...steps {
+            let frac = Double(i) / Double(steps)
+            let x = rect.width * frac
+            let cyc = (frac * 1.6 + scrollT).truncatingRemainder(dividingBy: 1.0)
+            let y = midY - amp * HeartbeatWave.ecg(cyc)
+            if i == 0 { path.move(to: CGPoint(x: x, y: y)) }
+            else { path.addLine(to: CGPoint(x: x, y: y)) }
         }
-        guard !active.isEmpty else {
-            return Gradient(colors: [.purple.opacity(0.95), .blue.opacity(0.8)])
-        }
-        var stops: [Gradient.Stop] = []
-        var cursor = 0.0
-        for (i, entry) in active.enumerated() {
-            let (svc, frac) = entry
-            let c = Theme.color(for: svc)
-            let start = cursor
-            let end = cursor + frac
-            let blendStart = i == 0 ? start : max(start, start - 0.08)
-            let blendEnd = i == active.count - 1 ? 1.0 : min(1.0, end - 0.08)
-            stops.append(.init(color: c, location: blendStart))
-            stops.append(.init(color: c, location: max(blendStart, blendEnd)))
-            cursor = end
-        }
-        return Gradient(stops: stops)
+        return path
     }
 }
+

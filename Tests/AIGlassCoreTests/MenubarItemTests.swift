@@ -10,7 +10,7 @@ import Testing
 }
 
 @MainActor @Test func menubarItemsOrderedFollowsCanonicalOrder() {
-    // 입력 순서 무관, allCases 고정 순(wave→todayTokens→burnRate→usagePercent→resetCountdown)으로 정렬.
-    let set: Set<MenubarItem> = [.resetCountdown, .wave, .todayTokens]
-    #expect(MenubarItem.ordered(set) == [.wave, .todayTokens, .resetCountdown])
+    // 입력 순서 무관, allCases 고정 순(wave→usagePercent→resetCountdown→todayTokens→burnRate)으로 정렬.
+    let set: Set<MenubarItem> = [.todayTokens, .wave, .resetCountdown]
+    #expect(MenubarItem.ordered(set) == [.wave, .resetCountdown, .todayTokens])
 }

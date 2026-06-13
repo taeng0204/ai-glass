@@ -30,20 +30,22 @@ enum MenubarMode: String, CaseIterable, Identifiable {
 
 /// 메뉴바에 동시 표시할 수 있는 항목 (다중 선택). 고정 순서로 렌더된다.
 enum MenubarItem: String, CaseIterable, Identifiable {
+    // 선언 순 = 메뉴바 렌더 순 = 설정·온보딩 옵션 순. 실제 보이는 순서대로:
+    // 웨이브 → 사용률 → 초기화 시간 → 오늘 토큰 → 소모 속도.
     case wave           // 미니 웨이브 알약
-    case todayTokens    // 오늘 누적 토큰 "612M"
-    case burnRate       // 소모 속도 "38K/m"
     case usagePercent   // 사용률 — 6초마다 서비스 로테이션, 점+그 서비스 5h % "● 63%"
     case resetCountdown // 리셋까지 남은 시간 (로테이션 서비스) "2h 15m"
+    case todayTokens    // 오늘 누적 토큰 "612M"
+    case burnRate       // 소모 속도 "38K/m"
 
     var id: String { rawValue }
     var label: String {
         switch self {
         case .wave: return "웨이브 알약"
-        case .todayTokens: return "오늘 누적 토큰"
-        case .burnRate: return "소모 속도 (t/min)"
         case .usagePercent: return "사용률 (서비스별)"
         case .resetCountdown: return "리셋까지 시간"
+        case .todayTokens: return "오늘 누적 토큰"
+        case .burnRate: return "소모 속도 (t/min)"
         }
     }
 
