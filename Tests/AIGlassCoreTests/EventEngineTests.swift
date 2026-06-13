@@ -91,11 +91,59 @@ import Testing
     let engine = EventEngine()
     let now = Date()
     let limits: [ServiceID: [LimitWindow]] = [.claude: [LimitWindow(kind: .weekly, usedPercent: 60, resetsAt: now.addingTimeInterval(7 * 86400))]]
-    // 4일 후 소진(올림 4일).
-    let dep: [ServiceID: [Depletion]] = [.claude: [Depletion(kind: .weekly, etaTo100: now.addingTimeInterval(4 * 86400), willDepleteBeforeReset: true)]]
+    // 리셋 7일, 소진 4일 → 4 ≤ 7×0.6(4.2) → 발화.
+    let dep: [ServiceID: [Depletion]] = [.claude: [Depletion(kind: .weekly, etaTo100: now.addingTimeInterval(4 * 86400), willDepleteBeforeReset: true, resetsAt: now.addingTimeInterval(7 * 86400))]]
     let events = engine.evaluate(limits: limits, burnRate: 0, baseline: 0, now: now, depletions: dep)
     #expect(events.count == 1)
     #expect(events[0].subtitle == "이 추세면 약 4일 후 주간 한도 소진")
+}
+
+@MainActor @Test func weeklyDepletionSuppressedWhenNearReset() {
+    // 사용자 시나리오: 리셋 4일 남았는데 소진도 4일 후 — 리셋과 사실상 동시라 무의미.
+    // 4 ≤ 4×0.6(2.4)? No → 발화 안 함.
+    let engine = EventEngine()
+    let now = Date()
+    let reset = now.addingTimeInterval(4 * 86400)
+    let dep: [ServiceID: [Depletion]] = [.claude: [Depletion(kind: .weekly, etaTo100: now.addingTimeInterval(4 * 86400), willDepleteBeforeReset: true, resetsAt: reset)]]
+    #expect(engine.evaluate(limits: [:], burnRate: 0, baseline: 0, now: now, depletions: dep).isEmpty)
+}
+
+@MainActor @Test func weeklyDepletionTodayMessageWhenWithin24h() {
+    // 리셋 2일, 소진 0.5일 → 0.5 ≤ 2×0.6(1.2) → 발화. 24h 이내라 "오늘".
+    let engine = EventEngine()
+    let now = Date()
+    let dep: [ServiceID: [Depletion]] = [.claude: [Depletion(kind: .weekly, etaTo100: now.addingTimeInterval(12 * 3600), willDepleteBeforeReset: true, resetsAt: now.addingTimeInterval(2 * 86400))]]
+    let events = engine.evaluate(limits: [:], burnRate: 0, baseline: 0, now: now, depletions: dep)
+    #expect(events.count == 1)
+    #expect(events[0].subtitle == "이 추세면 오늘 안에 주간 한도 소진")
+}
+
+@MainActor @Test func weeklyDepletionSuppressedOnResetDay() {
+    // 리셋까지 0.5일(당일) → minLead(1일) 미만이라 발화 안 함.
+    let engine = EventEngine()
+    let now = Date()
+    let dep: [ServiceID: [Depletion]] = [.claude: [Depletion(kind: .weekly, etaTo100: now.addingTimeInterval(3 * 3600), willDepleteBeforeReset: true, resetsAt: now.addingTimeInterval(12 * 3600))]]
+    #expect(engine.evaluate(limits: [:], burnRate: 0, baseline: 0, now: now, depletions: dep).isEmpty)
+}
+
+@MainActor @Test func fiveHourDepletionNotAffectedByWeeklyRule() {
+    let engine = EventEngine()
+    let now = Date()
+    // 5h 소진 예상이 5일 뒤(비현실적이지만)라도 시간 윈도우는 비율 제한 미적용 → 발화.
+    let dep: [ServiceID: [Depletion]] = [.claude: [Depletion(kind: .session5h, etaTo100: now.addingTimeInterval(5 * 86400), willDepleteBeforeReset: true)]]
+    #expect(engine.evaluate(limits: [:], burnRate: 0, baseline: 0, now: now, depletions: dep).count == 1)
+}
+
+@MainActor @Test func weeklyDepletionUsesLongCooldown() {
+    let engine = EventEngine()  // weeklyDepletionCooldown 기본 12시간
+    let now = Date()
+    // 리셋 6일, 소진 3일 → 3 ≤ 3.6 발화.
+    let dep: [ServiceID: [Depletion]] = [.claude: [Depletion(kind: .weekly, etaTo100: now.addingTimeInterval(3 * 86400), willDepleteBeforeReset: true, resetsAt: now.addingTimeInterval(6 * 86400))]]
+    #expect(engine.evaluate(limits: [:], burnRate: 0, baseline: 0, now: now, depletions: dep).count == 1)
+    // 30분 뒤 — 5h라면 발화하지만 주간은 12h 쿨다운이라 아직 침묵.
+    #expect(engine.evaluate(limits: [:], burnRate: 0, baseline: 0, now: now.addingTimeInterval(31 * 60), depletions: dep).isEmpty)
+    // 12시간 경과 후 재발화.
+    #expect(engine.evaluate(limits: [:], burnRate: 0, baseline: 0, now: now.addingTimeInterval(12 * 3600 + 60), depletions: dep).count == 1)
 }
 
 @MainActor @Test func fivesAndWeeklyHaveSeparateCooldowns() {
@@ -103,7 +151,7 @@ import Testing
     let now = Date()
     let dep: [ServiceID: [Depletion]] = [.claude: [
         Depletion(kind: .session5h, etaTo100: now.addingTimeInterval(20 * 60), willDepleteBeforeReset: true),
-        Depletion(kind: .weekly, etaTo100: now.addingTimeInterval(3 * 86400), willDepleteBeforeReset: true),
+        Depletion(kind: .weekly, etaTo100: now.addingTimeInterval(3 * 86400), willDepleteBeforeReset: true, resetsAt: now.addingTimeInterval(6 * 86400)),
     ]]
     // 둘 다 첫 발화 — 5h가 주간보다 먼저.
     let events = engine.evaluate(limits: [:], burnRate: 0, baseline: 0, now: now, depletions: dep)

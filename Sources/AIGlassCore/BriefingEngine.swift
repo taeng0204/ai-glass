@@ -62,6 +62,10 @@ public final class BriefingEngine {
     public var lastFired: [Period: Date] = [:]
     /// Period 구간 판정에 쓰는 캘린더. 테스트는 UTC 주입.
     public var calendar: Calendar
+    /// REAL Mode — 켜면 일반 브리핑 제목을 의인화 멘트로 교체. 주간 리포트는 정보 유지. 기본 off.
+    public var realMode: Bool = false
+    /// 이벤트별 사용자 커스텀 메시지 (kind.customKey → config). 호출자가 주입. 기본 없음.
+    public var customMessages: [String: CustomMessageConfig] = [:]
 
     public init(calendar: Calendar = .current) {
         self.calendar = calendar
@@ -99,7 +103,10 @@ public final class BriefingEngine {
             if data.streakDays >= 2 {
                 subtitle += " · \(data.streakDays)일 연속 🔥"
             }
-            return HUDEvent(kind: .briefing(.morning), title: "어제 사용 브리핑",
+            return HUDEvent(kind: .briefing(.morning),
+                            title: RealModeMessages.resolve(kind: .briefing(.morning), defaultTitle: "어제 사용 브리핑",
+                                                            realMode: realMode, custom: customMessages[HUDEvent.Kind.briefing(.morning).customKey],
+                                                            context: MessageContext(tokens: data.yesterdayTokens)),
                             subtitle: subtitle, percent: nil)
 
         case .lunch:
@@ -112,7 +119,10 @@ public final class BriefingEngine {
             let projectedTokens = Int(Double(data.todayTokens) / dayFraction)
             let projectedCost = data.todayCost / dayFraction
             let subtitle = "이 페이스면 자정까지 ~\(Self.formatTokens(projectedTokens)) (~\(Self.formatCost(projectedCost)))"
-            return HUDEvent(kind: .briefing(.lunch), title: "오늘 페이스",
+            return HUDEvent(kind: .briefing(.lunch),
+                            title: RealModeMessages.resolve(kind: .briefing(.lunch), defaultTitle: "오늘 페이스",
+                                                            realMode: realMode, custom: customMessages[HUDEvent.Kind.briefing(.lunch).customKey],
+                                                            context: MessageContext(tokens: data.todayTokens)),
                             subtitle: subtitle, percent: nil)
 
         case .evening:
@@ -121,7 +131,10 @@ public final class BriefingEngine {
             if let top = data.todayTopService {
                 subtitle += " · \(top.service.displayName) \(Int((top.share * 100).rounded()))% 비중"
             }
-            return HUDEvent(kind: .briefing(.evening), title: "오늘 사용 요약",
+            return HUDEvent(kind: .briefing(.evening),
+                            title: RealModeMessages.resolve(kind: .briefing(.evening), defaultTitle: "오늘 사용 요약",
+                                                            realMode: realMode, custom: customMessages[HUDEvent.Kind.briefing(.evening).customKey],
+                                                            context: MessageContext(tokens: data.todayTokens)),
                             subtitle: subtitle, percent: nil)
         }
     }

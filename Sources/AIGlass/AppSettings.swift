@@ -107,6 +107,15 @@ final class AppSettings {
         static let funWeeklyReport = "aiglass.funWeeklyReport"
         static let funSoundEnabled = "aiglass.funSoundEnabled"
         static let onboardingCompleted = "aiglass.onboardingCompleted"
+        static let notifyLimitThreshold = "aiglass.notifyLimitThreshold"
+        static let notifyDepletion = "aiglass.notifyDepletion"
+        static let notifyWindowReset = "aiglass.notifyWindowReset"
+        static let notifyBurnSpike = "aiglass.notifyBurnSpike"
+        static let notifyComeback = "aiglass.notifyComeback"
+        static let notifyBriefing = "aiglass.notifyBriefing"
+        static let notifyUpdate = "aiglass.notifyUpdate"
+        static let realMode = "aiglass.realMode"
+        static let customMessages = "aiglass.customMessages"
     }
 
     var warnThreshold: Double {
@@ -118,8 +127,49 @@ final class AppSettings {
     var hudVisible: Bool {
         didSet { defaults.set(hudVisible, forKey: Key.hudVisible) }
     }
+    /// 시스템 알림센터(macOS 배너)로도 보낼지. 기본 off — HUD가 주 알림 채널.
     var notificationsEnabled: Bool {
         didSet { defaults.set(notificationsEnabled, forKey: Key.notificationsEnabled) }
+    }
+    /// 사용량 알림 — 한도 임박(70/90% 교차). 기본 on.
+    var notifyLimitThreshold: Bool {
+        didSet { defaults.set(notifyLimitThreshold, forKey: Key.notifyLimitThreshold) }
+    }
+    /// 사용량 알림 — 소진 임박(리셋 전 소진 예측). 기본 on.
+    var notifyDepletion: Bool {
+        didSet { defaults.set(notifyDepletion, forKey: Key.notifyDepletion) }
+    }
+    /// 사용량 알림 — 새 윈도우 시작(한도 리셋 감지). 기본 on.
+    var notifyWindowReset: Bool {
+        didSet { defaults.set(notifyWindowReset, forKey: Key.notifyWindowReset) }
+    }
+    /// 사용량 알림 — 토큰 사용량 급증(평소의 N배). 기본 on.
+    var notifyBurnSpike: Bool {
+        didSet { defaults.set(notifyBurnSpike, forKey: Key.notifyBurnSpike) }
+    }
+    /// 활동 알림 — 컴백(공백 후 재개 인사). 기본 on.
+    var notifyComeback: Bool {
+        didSet { defaults.set(notifyComeback, forKey: Key.notifyComeback) }
+    }
+    /// 활동 알림 — 시간대별 브리핑(아침/점심/저녁 요약). 기본 on.
+    var notifyBriefing: Bool {
+        didSet { defaults.set(notifyBriefing, forKey: Key.notifyBriefing) }
+    }
+    /// 활동 알림 — 새 앱 버전 출시. 기본 on.
+    var notifyUpdate: Bool {
+        didSet { defaults.set(notifyUpdate, forKey: Key.notifyUpdate) }
+    }
+    /// REAL Mode — 알림 제목을 AI 의인화 멘트(엄살·이별·츤데레)로 교체. 기본 off.
+    var realMode: Bool {
+        didSet { defaults.set(realMode, forKey: Key.realMode) }
+    }
+    /// 이벤트별 사용자 커스텀 메시지 (customKey → config). 단일 JSON으로 직렬화 저장.
+    var customMessages: [String: CustomMessageConfig] {
+        didSet {
+            if let data = try? JSONEncoder().encode(customMessages) {
+                defaults.set(data, forKey: Key.customMessages)
+            }
+        }
     }
     var geminiDailyQuota: Int {
         didSet { defaults.set(geminiDailyQuota, forKey: Key.geminiDailyQuota) }
@@ -197,7 +247,21 @@ final class AppSettings {
         warnThreshold = defaults.object(forKey: Key.warnThreshold) as? Double ?? 70
         critThreshold = defaults.object(forKey: Key.critThreshold) as? Double ?? 90
         hudVisible = defaults.object(forKey: Key.hudVisible) as? Bool ?? true
-        notificationsEnabled = defaults.object(forKey: Key.notificationsEnabled) as? Bool ?? true
+        notificationsEnabled = defaults.object(forKey: Key.notificationsEnabled) as? Bool ?? false
+        notifyLimitThreshold = defaults.object(forKey: Key.notifyLimitThreshold) as? Bool ?? true
+        notifyDepletion = defaults.object(forKey: Key.notifyDepletion) as? Bool ?? true
+        notifyWindowReset = defaults.object(forKey: Key.notifyWindowReset) as? Bool ?? true
+        notifyBurnSpike = defaults.object(forKey: Key.notifyBurnSpike) as? Bool ?? true
+        notifyComeback = defaults.object(forKey: Key.notifyComeback) as? Bool ?? true
+        notifyBriefing = defaults.object(forKey: Key.notifyBriefing) as? Bool ?? true
+        notifyUpdate = defaults.object(forKey: Key.notifyUpdate) as? Bool ?? true
+        realMode = defaults.object(forKey: Key.realMode) as? Bool ?? false
+        if let data = defaults.data(forKey: Key.customMessages),
+           let decoded = try? JSONDecoder().decode([String: CustomMessageConfig].self, from: data) {
+            customMessages = decoded
+        } else {
+            customMessages = [:]
+        }
         geminiDailyQuota = defaults.object(forKey: Key.geminiDailyQuota) as? Int ?? 1000
         launchAtLogin = defaults.object(forKey: Key.launchAtLogin) as? Bool ?? false
         hudFrame = defaults.string(forKey: Key.hudFrame)

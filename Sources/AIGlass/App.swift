@@ -288,10 +288,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    /// 이벤트 종류별 설정 토글 — 꺼진 종류는 발화하지 않는다 (알림 탭에서 조절).
+    func eventKindEnabled(_ kind: HUDEvent.Kind) -> Bool {
+        switch kind {
+        case .limitThreshold: return settings.notifyLimitThreshold
+        case .depletionRisk:  return settings.notifyDepletion
+        case .windowReset:    return settings.notifyWindowReset
+        case .burnSpike:      return settings.notifyBurnSpike
+        case .comeback:       return settings.notifyComeback
+        case .briefing:       return settings.notifyBriefing
+        case .milestone:      return settings.funMilestone
+        case .record:         return settings.funRecord
+        case .update:         return settings.notifyUpdate
+        }
+    }
+
     func evaluateEvents() {
         let now = Date()
-        // 설정 임계값 주입.
+        // 설정 임계값·REAL Mode 주입.
         eventEngine.thresholds = [Int(settings.warnThreshold), Int(settings.critThreshold)]
+        eventEngine.realMode = settings.realMode
+        eventEngine.customMessages = settings.customMessages
         // 서비스별 소진 예측: 5h(store, 분 단위 기울기) + 주간(statsStore 스냅샷 → 일단위 추정).
         var depletions: [ServiceID: [Depletion]] = [:]
         for service in ServiceID.allCases {
@@ -313,8 +330,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             now: now,
             depletions: depletions,
             reportProvider: reportProvider)
-        // MVP: 갱신 주기당 최우선 이벤트 1건만 표시 (큐잉은 추후)
-        if let first = events.first {
+        // MVP: 갱신 주기당 최우선 이벤트 1건만 표시 (큐잉은 추후). 설정으로 꺼진 종류는 건너뜀.
+        if let first = events.first(where: { eventKindEnabled($0.kind) }) {
             showHUD(first)
             if settings.notificationsEnabled {
                 notifier.notify(title: first.title, subtitle: first.subtitle)
@@ -382,10 +399,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 return
             }
             self.updateState.available = release
-            if UserDefaults.standard.string(forKey: Self.updateNotifiedVersionKey) != release.version {
+            if UserDefaults.standard.string(forKey: Self.updateNotifiedVersionKey) != release.version,
+               self.settings.notifyUpdate {
                 UserDefaults.standard.set(release.version, forKey: Self.updateNotifiedVersionKey)
-                self.notifier.notify(title: "AI Glass v\(release.version) 업데이트가 나왔어요",
-                                     subtitle: "대시보드의 ↓ 배지에서 받을 수 있어요")
+                let event = HUDEvent(kind: .update,
+                                     title: RealModeMessages.resolve(kind: .update, defaultTitle: "업데이트가 나왔어요",
+                                                                     realMode: self.settings.realMode, custom: self.settings.customMessages[HUDEvent.Kind.update.customKey],
+                                                                     context: .empty),
+                                     subtitle: "v\(release.version) · 대시보드 ↓ 배지에서 받기",
+                                     percent: nil)
+                self.showHUD(event)
+                if self.settings.notificationsEnabled {
+                    self.notifier.notify(title: event.title, subtitle: event.subtitle)
+                }
             }
         }
     }
@@ -404,11 +430,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 활동 공백(≥3h) 후 재개를 감지하면 컴백 인사 HUD를 띄운다 (기록에도 남음).
     private func evaluateComebackIfDue() {
         guard let gap = store.consumeComebackGap() else { return }
+        guard settings.notifyComeback else { return }
         let now = Date()
         let formatted = EventEngine.countdown(to: now.addingTimeInterval(gap), from: now)
         showHUD(HUDEvent(kind: .comeback,
-                         title: "다시 달려볼까요!",
-                         subtitle: "\(formatted) 만에 AI 작업 재개",
+                         title: RealModeMessages.resolve(kind: .comeback, defaultTitle: "다시 시작해볼까요",
+                                                         realMode: settings.realMode, custom: settings.customMessages[HUDEvent.Kind.comeback.customKey],
+                                                         context: .empty),
+                         subtitle: "\(formatted) 만에 작업을 재개했어요",
                          percent: nil))
     }
 
@@ -431,7 +460,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if settings.funMilestone,
            let crossed = milestoneTracker.check(todayTokens: todayTokens, day: now, calendar: .utc) {
             showHUD(HUDEvent(kind: .milestone,
-                             title: "오늘 \(Self.formatTokens(crossed)) 돌파! 🎉",
+                             title: RealModeMessages.resolve(kind: .milestone, defaultTitle: "오늘 \(Self.formatTokens(crossed)) 돌파! 🎉",
+                                                             realMode: settings.realMode, custom: settings.customMessages[HUDEvent.Kind.milestone.customKey],
+                                                             context: MessageContext(tokens: todayTokens)),
                              subtitle: "오늘 누적 \(Self.formatTokens(todayTokens)) tokens",
                              percent: nil))
         }
@@ -444,7 +475,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                prevMax > 0, todayTokens > prevMax {
                 recordFiredDay = dayStr
                 showHUD(HUDEvent(kind: .record,
-                                 title: "오늘 신기록! 🏆",
+                                 title: RealModeMessages.resolve(kind: .record, defaultTitle: "오늘 신기록! 🏆",
+                                                                 realMode: settings.realMode, custom: settings.customMessages[HUDEvent.Kind.record.customKey],
+                                                                 context: MessageContext(tokens: todayTokens)),
                                  subtitle: "종전 \(Self.formatTokens(prevMax))",
                                  percent: nil))
             }
@@ -508,10 +541,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// 5분에 1회만 브리핑을 평가한다(기존 30초 refresh 타이머에 편승).
     private func evaluateBriefingIfDue() {
+        guard settings.notifyBriefing else { return }
         let now = Date()
         guard now.timeIntervalSince(lastBriefingEvalAt) >= 5 * 60 else { return }
         lastBriefingEvalAt = now
 
+        briefingEngine.realMode = settings.realMode
+        briefingEngine.customMessages = settings.customMessages
         let data = makeBriefingData(now: now)
         let before = briefingEngine.lastFired
         guard let event = briefingEngine.evaluate(now: now, data: data) else { return }
@@ -654,7 +690,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         let view = SettingsView(settings: settings, hudController: hudController,
                                 onMenubarModeChange: { [weak self] in self?.updateStatusTitle() },
-                                onReplayOnboarding: { [weak self] in self?.openOnboarding() })
+                                onReplayOnboarding: { [weak self] in self?.openOnboarding() },
+                                onPreviewEvent: { [weak self] event in self?.flashHUD(event, duration: 4) })
         let hosting = NSHostingController(rootView: view)
         let win = NSWindow(contentViewController: hosting)
         win.title = "AI Glass 설정"

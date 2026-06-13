@@ -103,6 +103,7 @@ extension HUDEvent.Kind {
         case .comeback: return "figure.wave"
         case .milestone: return "party.popper.fill"
         case .record: return "trophy.fill"
+        case .update: return "arrow.down.circle.fill"
         case .briefing(let period):
             switch period {
             case .morning: return "sun.max.fill"
@@ -120,6 +121,7 @@ extension HUDEvent.Kind {
         case .comeback: return .cyan
         case .milestone: return .yellow
         case .record: return .orange
+        case .update: return .blue
         case .briefing(let period):
             switch period {
             case .morning: return .yellow

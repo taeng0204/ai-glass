@@ -8,10 +8,13 @@ public struct Depletion: Equatable, Sendable {
     public let etaTo100: Date
     /// 리셋보다 먼저 소진될지 여부 (resetsAt이 있고 etaTo100 < resetsAt).
     public let willDepleteBeforeReset: Bool
-    public init(kind: LimitWindow.Kind, etaTo100: Date, willDepleteBeforeReset: Bool) {
+    /// 해당 윈도우의 리셋 시각 (비율 기반 발화 판정에 사용). 모르면 nil.
+    public let resetsAt: Date?
+    public init(kind: LimitWindow.Kind, etaTo100: Date, willDepleteBeforeReset: Bool, resetsAt: Date? = nil) {
         self.kind = kind
         self.etaTo100 = etaTo100
         self.willDepleteBeforeReset = willDepleteBeforeReset
+        self.resetsAt = resetsAt
     }
 }
 
@@ -53,7 +56,7 @@ public enum DepletionEstimator {
         guard minutesTo100 > 0 else { return nil }
         let eta = now.addingTimeInterval(minutesTo100 * 60)
         let willDeplete = resetsAt.map { eta < $0 } ?? false
-        return Depletion(kind: kind, etaTo100: eta, willDepleteBeforeReset: willDeplete)
+        return Depletion(kind: kind, etaTo100: eta, willDepleteBeforeReset: willDeplete, resetsAt: resetsAt)
     }
 
     /// 일 단위 소모율(%/day) 추정 — 주간 윈도우용.
@@ -89,6 +92,6 @@ public enum DepletionEstimator {
         let daysTo100 = remaining / rate
         let eta = now.addingTimeInterval(daysTo100 * 24 * 3600)
         let willDeplete = resetsAt.map { eta < $0 } ?? false
-        return Depletion(kind: .weekly, etaTo100: eta, willDepleteBeforeReset: willDeplete)
+        return Depletion(kind: .weekly, etaTo100: eta, willDepleteBeforeReset: willDeplete, resetsAt: resetsAt)
     }
 }

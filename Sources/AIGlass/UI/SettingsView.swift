@@ -6,10 +6,13 @@ import AIGlassCore
 struct SettingsView: View {
     @Bindable var settings: AppSettings
     weak var hudController: HUDPanelController?
+    @State private var showCustomEditor = false
     /// 메뉴바 모드 변경 시 타이틀 즉시 갱신 (다음 refresh까지 안 기다림).
     var onMenubarModeChange: () -> Void = {}
     /// "온보딩 다시 보기" 버튼 — 온보딩 위저드를 강제로 띄운다.
     var onReplayOnboarding: () -> Void = {}
+    /// 커스텀 메시지 미리보기 — 샘플 HUD 카드를 잠깐 띄운다.
+    var onPreviewEvent: (HUDEvent) -> Void = { _ in }
 
     var body: some View {
         TabView {
@@ -19,10 +22,15 @@ struct SettingsView: View {
                 .tabItem { Label("표시", systemImage: "rectangle.3.group") }
             hudTab
                 .tabItem { Label("HUD", systemImage: "capsule") }
-            funTab
-                .tabItem { Label("재미", systemImage: "party.popper") }
+            notificationsTab
+                .tabItem { Label("알림", systemImage: "bell") }
+            messagesTab
+                .tabItem { Label("메시지", systemImage: "quote.bubble") }
         }
-        .frame(width: 460, height: 400)
+        .frame(width: 500, height: 540)
+        .sheet(isPresented: $showCustomEditor) {
+            CustomMessagesEditor(settings: settings, onPreview: onPreviewEvent)
+        }
     }
 
     // MARK: - 일반 — 로그인 시 시작 / 알림 / 온보딩 다시 보기
@@ -39,12 +47,6 @@ struct SettingsView: View {
                     Text("앱 번들에서만 가능 (make-app.sh로 .app 생성 후)")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-            }
-
-            Section("알림") {
-                Toggle("알림 보내기", isOn: $settings.notificationsEnabled)
-                Text("한도/소진/마일스톤 등을 시스템 알림으로 보냅니다")
-                    .font(.caption).foregroundStyle(.secondary)
             }
 
             Section("온보딩") {
@@ -75,19 +77,6 @@ struct SettingsView: View {
                         .disabled(settings.enabledServices == [service]) // 마지막 1개는 못 끔
                 }
                 Text("끄면 대시보드·HUD·알림에서 제외됩니다")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-
-            Section("색상과 알림 기준") {
-                Stepper(value: $settings.warnThreshold,
-                        in: 50...(settings.critThreshold - 5), step: 5) {
-                    Text("경고: \(Int(settings.warnThreshold))%")
-                }
-                Stepper(value: $settings.critThreshold,
-                        in: (settings.warnThreshold + 5)...99, step: 5) {
-                    Text("위험: \(Int(settings.critThreshold))%")
-                }
-                Text("게이지 색상과 알림 기준에 함께 적용됩니다")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -145,16 +134,67 @@ struct SettingsView: View {
         .formStyle(.grouped)
     }
 
-    // MARK: - 재미 — 마일스톤 / 신기록 / 스트릭 / 주간 리포트 / 사운드
+    // MARK: - 알림 — 종류별 on/off (사용량 / 활동·요약 / 재미) + 전달 방식
 
-    private var funTab: some View {
+    private var notificationsTab: some View {
         Form {
+            Section("사용량 알림") {
+                Toggle("한도 임박 (경고 · 위험 도달)", isOn: $settings.notifyLimitThreshold)
+                Toggle("소진 임박 (리셋 전 소진 예측)", isOn: $settings.notifyDepletion)
+                Toggle("새 윈도우 시작 (한도 리셋)", isOn: $settings.notifyWindowReset)
+                Toggle("사용량 급증 (평소보다 빠른 소모)", isOn: $settings.notifyBurnSpike)
+            }
+
+            Section("한도 임박 기준") {
+                Stepper(value: $settings.warnThreshold,
+                        in: 50...(settings.critThreshold - 5), step: 5) {
+                    Text("경고: \(Int(settings.warnThreshold))%")
+                }
+                Stepper(value: $settings.critThreshold,
+                        in: (settings.warnThreshold + 5)...99, step: 5) {
+                    Text("위험: \(Int(settings.critThreshold))%")
+                }
+                Text("이 값에서 한도 임박 알림이 뜨며, 게이지 색상에도 함께 적용됩니다")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("활동 · 요약") {
+                Toggle("컴백 (공백 후 재개)", isOn: $settings.notifyComeback)
+                Toggle("시간대별 브리핑 (아침·점심·저녁)", isOn: $settings.notifyBriefing)
+                Toggle("업데이트 (새 버전 출시)", isOn: $settings.notifyUpdate)
+            }
+
             Section("재미") {
                 Toggle("마일스톤 (오늘 누적 돌파)", isOn: $settings.funMilestone)
                 Toggle("신기록 (역대 최대 갱신)", isOn: $settings.funRecord)
                 Toggle("스트릭 (연속 사용일)", isOn: $settings.funStreak)
                 Toggle("주간 리포트 (월요일 아침)", isOn: $settings.funWeeklyReport)
+            }
+
+            Section("전달 방식") {
                 Toggle("알림 사운드", isOn: $settings.funSoundEnabled)
+                Toggle("시스템 알림센터 배너", isOn: $settings.notificationsEnabled)
+                Text("기본은 HUD 카드로 표시합니다. 배너를 켜면 macOS 알림센터로도 보냅니다")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    // MARK: - 메시지 — REAL Mode / 커스텀 알림 문구
+
+    private var messagesTab: some View {
+        Form {
+            Section("REAL Mode 😎") {
+                Toggle("REAL Mode 켜기", isOn: $settings.realMode)
+                Text("당신의 AI들의 속내를 들어볼 수 있습니다. (정보 %·시간은 그대로 유지돼요)")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("커스텀 메시지") {
+                Button("커스텀 메시지 편집…") { showCustomEditor = true }
+                Text("이벤트별로 나만의 알림 문구를 직접 정할 수 있어요. {AGENT} {USAGE} 같은 변수도 사용 가능하고, 여러 개를 넣으면 무작위로 번갈아 표시됩니다")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

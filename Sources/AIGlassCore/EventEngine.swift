@@ -10,6 +10,7 @@ public struct HUDEvent: Equatable {
         case comeback                         // 활동 공백 ≥3h 후 재시작
         case milestone                        // 오늘 누적 토큰 명예 임계 통과
         case record                           // 일일 토큰 신기록 경신
+        case update                           // 새 앱 버전 출시 (EventEngine과 무관 — 타입만 공유)
     }
     public let kind: Kind
     public let title: String
@@ -31,8 +32,20 @@ public final class EventEngine {
     public var spikeCooldown: TimeInterval = 30 * 60
     public var resetDropFloor: Double = 10  // 이 미만으로 떨어지면 리셋으로 간주
     public var resetDropFrom: Double = 30   // 직전 값이 이 이상이었을 때만
-    /// depletionRisk 서비스별 쿨다운 (기본 30분).
+    /// depletionRisk 서비스별 쿨다운 (5h 등 시간 윈도우, 기본 30분 — 긴박하므로 짧게).
     public var depletionCooldown: TimeInterval = 30 * 60
+    /// 주간 소진 임박 쿨다운 (기본 12시간 — 일 단위 예측이라 하루 최대 2번이면 충분).
+    public var weeklyDepletionCooldown: TimeInterval = 12 * 3600
+    /// REAL Mode — 켜면 이벤트 제목을 의인화 감성 멘트로 교체(부제 정보는 유지). 기본 off.
+    public var realMode: Bool = false
+    /// 이벤트별 사용자 커스텀 메시지 (kind.customKey → config). 호출자가 주입. 기본 없음.
+    public var customMessages: [String: CustomMessageConfig] = [:]
+    /// 주간 소진 임박 발화 기준 — 소진 예상이 "리셋까지 남은 기간 × 이 비율" 이전일 때만 발화한다.
+    /// 절대 일수 대신 비율로 잡아, 리셋이 임박할수록 더 임박한 소진만 알린다
+    /// (예: 0.6 → 리셋 6일이면 ~3.6일·리셋 2일이면 ~1.2일 이내 소진). 5h 윈도우엔 미적용.
+    public var weeklyDepletionRatio: Double = 0.6
+    /// 주간 소진 임박은 리셋까지 이 시간 이상 남았을 때만 발화 (당일/임박 시 무의미). 기본 1일.
+    public var weeklyDepletionMinLead: TimeInterval = 24 * 3600
 
     private var lastPercent: [ServiceID: [LimitWindow.Kind: Double]] = [:]
     private var lastSpikeAt: Date = .distantPast
@@ -63,9 +76,13 @@ public final class EventEngine {
 
                 for threshold in thresholds.sorted(by: >) {
                     if previous < Double(threshold), window.usedPercent >= Double(threshold) {
+                        let kind = HUDEvent.Kind.limitThreshold(service, threshold)
+                        let ctx = MessageContext(agent: service.displayName, usage: window.usedPercent,
+                                                 reset: window.resetsAt.map { Self.countdown(to: $0, from: now) })
                         thresholdEvents.append(HUDEvent(
-                            kind: .limitThreshold(service, threshold),
-                            title: "\(service.displayName) 한도 임박",
+                            kind: kind,
+                            title: RealModeMessages.resolve(kind: kind, defaultTitle: "\(service.displayName) 한도 임박",
+                                                            realMode: realMode, custom: customMessages[kind.customKey], context: ctx),
                             subtitle: "\(window.kind.label) 윈도우 \(Int(window.usedPercent))%"
                                 + (window.resetsAt.map { " · \(Self.countdown(to: $0, from: now)) 후 리셋" } ?? ""),
                             percent: window.usedPercent))
@@ -75,9 +92,12 @@ public final class EventEngine {
                 if previous >= resetDropFrom, window.usedPercent < resetDropFloor {
                     let defaultSubtitle = "\(window.kind.label) 한도가 리셋되었습니다"
                     let subtitle = reportProvider?(service) ?? defaultSubtitle
+                    let resetKind = HUDEvent.Kind.windowReset(service)
                     resetEvents.append(HUDEvent(
-                        kind: .windowReset(service),
-                        title: "\(service.displayName) 새 윈도우 시작",
+                        kind: resetKind,
+                        title: RealModeMessages.resolve(kind: resetKind, defaultTitle: "\(service.displayName) 새 윈도우 시작",
+                                                        realMode: realMode, custom: customMessages[resetKind.customKey],
+                                                        context: MessageContext(agent: service.displayName)),
                         subtitle: subtitle,
                         percent: window.usedPercent))
                 }
@@ -89,23 +109,40 @@ public final class EventEngine {
         for service in ServiceID.allCases {
             guard let list = depletions[service] else { continue }
             let ordered = list.filter { $0.willDepleteBeforeReset }
+                // 주간은 비율 기반: 소진이 리셋 기간의 60% 이전 + 리셋까지 1일 이상 남았을 때만.
+                .filter { dep in
+                    guard dep.kind == .weekly else { return true }
+                    guard let reset = dep.resetsAt else { return false }
+                    let resetLead = reset.timeIntervalSince(now)
+                    let depLead = dep.etaTo100.timeIntervalSince(now)
+                    return resetLead >= weeklyDepletionMinLead && depLead <= resetLead * weeklyDepletionRatio
+                }
                 .sorted { kindOrder($0.kind) < kindOrder($1.kind) }
             for depletion in ordered {
                 let key = DepletionKey(service: service, kind: depletion.kind)
                 let last = lastDepletionAt[key] ?? .distantPast
-                guard now.timeIntervalSince(last) >= depletionCooldown else { continue }
+                // 주간은 일 단위 예측이라 길게(12h), 5h 등 시간 윈도우는 짧게(30m).
+                let cooldown = depletion.kind == .weekly ? weeklyDepletionCooldown : depletionCooldown
+                guard now.timeIntervalSince(last) >= cooldown else { continue }
                 lastDepletionAt[key] = now
                 let subtitle: String
                 switch depletion.kind {
                 case .weekly:
-                    let days = Self.daysUntil(depletion.etaTo100, from: now)
-                    subtitle = "이 추세면 약 \(days)일 후 주간 한도 소진"
+                    if depletion.etaTo100.timeIntervalSince(now) <= 24 * 3600 {
+                        subtitle = "이 추세면 오늘 안에 주간 한도 소진"
+                    } else {
+                        let days = Self.daysUntil(depletion.etaTo100, from: now)
+                        subtitle = "이 추세면 약 \(days)일 후 주간 한도 소진"
+                    }
                 default:
                     subtitle = "이 속도면 \(Self.countdown(to: depletion.etaTo100, from: now)) 후 5h 한도 소진"
                 }
+                let depKind = HUDEvent.Kind.depletionRisk(service)
                 depletionEvents.append(HUDEvent(
-                    kind: .depletionRisk(service),
-                    title: "⚠️ \(service.displayName) 소진 임박",
+                    kind: depKind,
+                    title: RealModeMessages.resolve(kind: depKind, defaultTitle: "⚠️ \(service.displayName) 소진 임박",
+                                                    realMode: realMode, custom: customMessages[depKind.customKey],
+                                                    context: MessageContext(agent: service.displayName)),
                     subtitle: subtitle,
                     percent: nil))
             }
@@ -118,7 +155,9 @@ public final class EventEngine {
             let ratio = burnRate / baseline
             spikeEvents.append(HUDEvent(
                 kind: .burnSpike,
-                title: "토큰 사용량 급증",
+                title: RealModeMessages.resolve(kind: .burnSpike, defaultTitle: "토큰 사용량 급증",
+                                                realMode: realMode, custom: customMessages[HUDEvent.Kind.burnSpike.customKey],
+                                                context: .empty),
                 subtitle: String(format: "평소의 %.1f배 속도로 소모 중", ratio),
                 percent: nil))
         }

@@ -292,9 +292,9 @@ struct OnboardingView: View {
 
     private var funStep: some View {
         VStack(spacing: 16) {
-            stepHeader("알림 & 재미", "원하는 알림과 재미 기능을 고르세요. 나중에 설정에서 바꿀 수 있습니다.")
+            stepHeader("알림 & 재미", "원하는 재미 기능을 고르세요. 알림은 HUD 카드로 표시되며, 나중에 설정에서 종류별로 바꿀 수 있습니다.")
             VStack(spacing: 4) {
-                funToggle("알림 보내기", isOn: $settings.notificationsEnabled)
+                funToggle("REAL Mode 😎 — AI들의 속내 듣기", isOn: $settings.realMode)
                 funToggle("마일스톤 (오늘 누적 돌파)", isOn: $settings.funMilestone)
                 funToggle("신기록 (역대 최대 갱신)", isOn: $settings.funRecord)
                 funToggle("스트릭 (연속 사용일)", isOn: $settings.funStreak)
