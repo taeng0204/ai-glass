@@ -245,23 +245,13 @@ struct WavePill: View {
         return full.mapValues { $0 / grand }
     }
 
-    /// 리셋 카운트다운 텍스트 — 분 단위라 1초에 1회만 갱신(매 프레임 문자열 포맷 낭비 제거).
-    @State private var displayCountdown: String?
     /// idle 저프레임 여부 — 1Hz로 갱신(@State라 변경 시 body 재평가 → TimelineView 스케줄 갱신).
-    /// 계산 프로퍼티로 두면 idle 진입(시간 경과)이 body 재평가를 트리거하지 않아 30fps가 고착된다.
+    /// 계산 프로퍼티로 두면 idle 진입(시간 경과)이 body 재평가를 트리거하지 않아 60fps가 고착된다.
     @State private var slowFrame = false
 
-    /// 카운트다운·저프레임 상태를 1Hz로 재계산해 @State에 반영한다.
+    /// idle 저프레임 상태를 1Hz로 재계산해 @State에 반영한다.
+    /// (카운트다운·점 색·진폭·색은 TimelineView 내에서 즉시 계산 — 반응 지연 방지.)
     private func refreshDynamicState(now: Date) {
-        // 카운트다운 (현재 로테이션 서비스 기준)
-        let services = rotationServices
-        if showsCountdown, !services.isEmpty {
-            let current = services[Int(now.timeIntervalSinceReferenceDate / 6) % services.count]
-            displayCountdown = resetCountdown(current, now: now)
-        } else {
-            displayCountdown = nil
-        }
-        // idle 저프레임: 활동 0 + 한도 글로우 불필요 + 메뉴바 정지 모드 아님
         slowFrame = !paused
             && store.activityLevel(now: now) == 0
             && store.requestActivityLevel(now: now) == 0
@@ -269,7 +259,7 @@ struct WavePill: View {
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: slowFrame ? 1.0 / 8.0 : 1.0 / 30.0,
+        TimelineView(.animation(minimumInterval: slowFrame ? 1.0 / 8.0 : 1.0 / 60.0,
                                 paused: paused)) { context in
             let t = context.date.timeIntervalSinceReferenceDate
             let level = max(store.activityLevel(now: context.date),
@@ -286,8 +276,9 @@ struct WavePill: View {
             let glow = 0.5 + 0.5 * sin(t * (2 * .pi / 2.0)) // 0...1, 2초 주기
             let glowRadius = critical ? 6 + 8 * glow : 0
 
-            // 카운트다운은 1Hz @State(refreshCountdown)에서 갱신 — 매 프레임 재계산하지 않는다.
-            let countdown = current != nil ? displayCountdown : nil
+            // 카운트다운은 current(로테이션)와 같은 시점에 계산 — 스와이프 직후 즉시 새 서비스 값.
+            let countdown = (showsCountdown && current != nil)
+                ? resetCountdown(current!, now: context.date) : nil
 
             let input = WaveInput(t: t, level: level, amplitude: amplitude,
                                   share: share, current: current, percent: percent)

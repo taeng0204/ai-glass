@@ -185,27 +185,34 @@ struct PulseBarsWave: View {
 struct SmoothWave: View {
     let input: WaveInput
     var body: some View {
-        Canvas { ctx, size in
-            let midY = size.height / 2
-            let amp = (size.height / 2 - 1.5) * input.amplitude
-            // 속도는 상수 — 가변 속도 × t는 t가 거대해 위상 점프(깜빡임)를 만든다.
-            // 활동 반응은 진폭(amplitude)으로 충분.
-            let speed = 2.4
-            var path = Path()
-            let steps = 48
-            for i in 0...steps {
-                let x = size.width * Double(i) / Double(steps)
-                let phase = (Double(i) / Double(steps)) * 4 * .pi + input.t * speed
-                let y = midY + amp * sin(phase)
-                if i == 0 { path.move(to: CGPoint(x: x, y: y)) }
-                else { path.addLine(to: CGPoint(x: x, y: y)) }
-            }
-            ctx.stroke(path, with: .linearGradient(input.gGradient,
-                                                   startPoint: .zero,
-                                                   endPoint: CGPoint(x: size.width, y: 0)),
-                       style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+        // Canvas(CPU 래스터) 대신 Shape(GPU 렌더) — 매 프레임 CPU Path 래스터를 피한다.
+        // path 생성(sin 계산)은 CPU지만 가볍고, stroke 래스터는 GPU가 처리.
+        SmoothWaveShape(t: input.t, amplitude: input.amplitude)
+            .stroke(input.gradient,
+                    style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+            .frame(width: waveWidth, height: waveHeight)
+    }
+}
+
+/// 연속 사인 물결 곡선 (GPU 렌더용 Shape — 기존 Canvas와 동일 기하).
+struct SmoothWaveShape: Shape {
+    let t: Double
+    let amplitude: Double
+    func path(in rect: CGRect) -> Path {
+        let midY = rect.height / 2
+        let amp = (rect.height / 2 - 1.5) * amplitude
+        // 속도는 상수 — 가변 속도 × t는 t가 거대해 위상 점프(깜빡임)를 만든다.
+        let speed = 2.4
+        var path = Path()
+        let steps = 48
+        for i in 0...steps {
+            let x = rect.width * Double(i) / Double(steps)
+            let phase = (Double(i) / Double(steps)) * 4 * .pi + t * speed
+            let y = midY + amp * sin(phase)
+            if i == 0 { path.move(to: CGPoint(x: x, y: y)) }
+            else { path.addLine(to: CGPoint(x: x, y: y)) }
         }
-        .frame(width: waveWidth, height: waveHeight)
+        return path
     }
 }
 

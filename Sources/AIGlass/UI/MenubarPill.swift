@@ -42,15 +42,21 @@ struct MenubarContentView: View {
 
     var body: some View {
         let items = MenubarItem.ordered(settings.menubarItems)
-        let needsRotation = items.contains(.usagePercent) || items.contains(.resetCountdown)
+        // 웨이브가 켜져 있으면 사용률·리셋시간은 웨이브 항목이 흡수한다(HUD처럼 웨이브+점+%+카운트다운
+        // 한 덩어리) — 별도 점이 따로 놀지 않게. 웨이브가 꺼져 있을 때만 독립 텍스트로.
+        let waveAbsorbs = items.contains(.wave)
+        let display = waveAbsorbs
+            ? items.filter { $0 != .usagePercent && $0 != .resetCountdown }
+            : items
+        let needsRotation = display.contains(.usagePercent) || display.contains(.resetCountdown)
         Group {
             if needsRotation {
-                // 로테이션(6초)·카운트다운(분) 갱신 — 1초 주기면 충분(저비용).
+                // 독립 사용률·리셋시간(웨이브 꺼짐)은 6초 로테이션·분 단위라 1초 주기 갱신.
                 TimelineView(.animation(minimumInterval: 1.0)) { ctx in
-                    row(items, now: ctx.date)
+                    row(display, now: ctx.date)
                 }
             } else {
-                row(items, now: Date())
+                row(display, now: Date())
             }
         }
     }
@@ -79,9 +85,11 @@ struct MenubarContentView: View {
     private func itemView(_ item: MenubarItem, isFirst: Bool, now: Date, current: ServiceID?) -> some View {
         switch item {
         case .wave:
+            // 사용률·리셋시간 항목이 켜져 있으면 웨이브가 그 점+%+카운트다운을 함께 그린다(흡수).
             WavePill(store: store, enabled: settings.enabledServices,
                      warn: settings.warnThreshold, crit: settings.critThreshold,
-                     showsPercent: false, showsCountdown: false,
+                     showsPercent: settings.menubarItems.contains(.usagePercent),
+                     showsCountdown: settings.menubarItems.contains(.resetCountdown),
                      waveStyle: settings.waveStyle, compact: true,
                      paused: store.activityLevel(now: now) == 0
                           && store.requestActivityLevel(now: now) == 0)
@@ -105,11 +113,8 @@ struct MenubarContentView: View {
             }
         case .resetCountdown:
             // 로테이션 서비스의 리셋까지 남은 시간.
-            if let cur = current, let t = resetText(cur, now: now) {
-                Text(t).foregroundStyle(.secondary)
-            } else {
-                Text("–").foregroundStyle(.secondary)
-            }
+            Text((current.flatMap { resetText($0, now: now) }) ?? "–")
+                .foregroundStyle(.secondary)
         }
     }
 
