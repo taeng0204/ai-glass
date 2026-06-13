@@ -125,7 +125,7 @@ struct OnboardingView: View {
     /// 트랙·메뉴바 모드에 따라 웨이브 단계 부제를 바꾼다.
     private var waveStyleSubtitle: String {
         if track == .menubar {
-            return settings.menubarMode == .wavePill
+            return settings.menubarItems.contains(.wave)
                 ? "메뉴바 알약의 움직임을 고르세요. 탭하면 바로 적용됩니다."
                 : "웨이브 스타일은 이렇게 다양해요 — 기본(펄스 바)으로 둬도 되고, 마음에 드는 걸 골라보세요."
         }
@@ -164,43 +164,42 @@ struct OnboardingView: View {
 
     private var menubarStep: some View {
         VStack(spacing: 16) {
-            stepHeader("메뉴바 표시", "메뉴바에 어떤 정보를 고정 표시할지 고르세요.")
+            stepHeader("메뉴바 표시", "메뉴바에 표시할 항목을 고르세요. 여러 개 켤 수 있어요.")
             VStack(spacing: 10) {
-                ForEach(MenubarMode.allCases) { mode in
-                    menubarRow(mode)
+                ForEach(MenubarItem.allCases) { item in
+                    menubarItemRow(item)
                 }
             }
             Spacer()
         }
     }
 
-    private func menubarRow(_ mode: MenubarMode) -> some View {
-        let selected = settings.menubarMode == mode
+    private func menubarItemRow(_ item: MenubarItem) -> some View {
+        let selected = settings.menubarItems.contains(item)
         return Button {
-            settings.menubarMode = mode
-            onMenubarRefresh() // 모드 전환(텍스트↔알약)·알약 폭 즉시 반영
+            if selected { settings.menubarItems.remove(item) }
+            else { settings.menubarItems.insert(item) }
+            onMenubarRefresh() // 항목 추가/제거·웨이브 폭 즉시 반영
         } label: {
             HStack(spacing: 14) {
-                // 미니 알약은 실제 웨이브를 라이브로(다른 모드는 메뉴바 텍스트 그대로).
+                // 웨이브는 실제 웨이브를 라이브로(나머지는 메뉴바 텍스트 그대로).
                 Group {
-                    if mode == .wavePill {
+                    if item == .wave {
                         WaveStylePreview(style: settings.waveStyle, chrome: false)
-                            .fixedSize() // "49%"가 줄바꿈되지 않도록 자연 폭 유지
+                            .fixedSize()
                     } else {
-                        Text(menubarPreviewText(mode))
+                        Text(menubarItemPreview(item))
                             .font(.system(size: 13, weight: .medium).monospacedDigit())
                             .foregroundStyle(.primary)
                     }
                 }
                 .frame(width: 108, alignment: .leading)
-                Text(mode.label)
+                Text(item.label)
                     .font(.body)
                     .foregroundStyle(.secondary)
                 Spacer()
-                if selected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(Color.accentColor)
-                }
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(selected ? Color.accentColor : .secondary.opacity(0.5))
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 11)
@@ -212,14 +211,13 @@ struct OnboardingView: View {
         .buttonStyle(.plain)
     }
 
-    /// 텍스트 모드 프리뷰 (wavePill은 WaveStylePreview 라이브 렌더 — 여기 미포함).
-    private func menubarPreviewText(_ mode: MenubarMode) -> String {
-        switch mode {
+    /// 텍스트 항목 프리뷰 (wave는 WaveStylePreview 라이브 렌더 — 여기 미포함).
+    private func menubarItemPreview(_ item: MenubarItem) -> String {
+        switch item {
+        case .wave: return ""
         case .todayTokens: return "✦ 612M"
         case .burnRate: return "✦ 38K/m"
         case .maxPercent: return "✦ 49%"
-        case .iconOnly: return "✦"
-        case .wavePill: return ""
         }
     }
 
