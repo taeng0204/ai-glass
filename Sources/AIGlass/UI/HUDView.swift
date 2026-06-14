@@ -452,18 +452,23 @@ struct EventCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
                 Image(systemName: event.kind.iconName)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(event.kind.iconColor)
+                    .frame(height: 16) // 한 줄 높이 기준 아이콘 정렬(제목이 두 줄이어도 위에 맞춤)
                 Text(event.title).font(.system(size: 12, weight: .bold))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Text(event.subtitle).font(.system(size: 10.5)).foregroundStyle(.secondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
             if let percent = event.percent {
                 GaugeBar(percent: percent, tint: Theme.statusColor(percent: percent, warn: warn, crit: crit))
             }
         }
         .padding(12)
-        .frame(width: 230, alignment: .leading)
+        .frame(width: 252, alignment: .leading)
     }
 }
