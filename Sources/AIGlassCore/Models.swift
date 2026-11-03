@@ -1,24 +1,26 @@
 import Foundation
 
 public enum ServiceID: String, CaseIterable, Codable, Sendable, Identifiable {
-    case claude, codex, gemini
+    case claude, codex, gemini, kimi
     public var id: String { rawValue }
     public var displayName: String {
         switch self {
         case .claude: return "Claude"
         case .codex: return "Codex"
         case .gemini: return "Antigravity"
+        case .kimi: return "Kimi"
         }
     }
 }
 
 public struct LimitWindow: Equatable, Sendable {
     public enum Kind: String, Sendable, CaseIterable {
-        case session5h, weekly, daily
+        case session5h, weekly, monthly, daily
         public var label: String {
             switch self {
             case .session5h: return "5h"
             case .weekly: return "주간"
+            case .monthly: return "월간"
             case .daily: return "일일"
             }
         }

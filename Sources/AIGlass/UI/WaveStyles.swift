@@ -31,7 +31,7 @@ extension WaveStyle {
 
 extension WaveInput {
     /// 온보딩/설정 프리뷰용 데모 입력 (store 의존 없음).
-    /// share: 3색 모두 보이도록 claude 0.45 / codex 0.35 / gemini 0.20,
+    /// share: 4색 모두 보이도록 claude 0.40 / codex 0.30 / gemini 0.15 / kimi 0.15,
     /// activityLevel 0.5, percent 49%. `t`만 TimelineView가 주입 — 나머지는 고정.
     static func demo(t: Double) -> WaveInput {
         let level = 0.5
@@ -39,7 +39,7 @@ extension WaveInput {
             t: t,
             level: level,
             amplitude: 0.15 + 0.85 * level,
-            share: [.claude: 0.45, .codex: 0.35, .gemini: 0.20],
+            share: [.claude: 0.40, .codex: 0.30, .gemini: 0.15, .kimi: 0.15],
             current: .claude,
             percent: 49)
     }

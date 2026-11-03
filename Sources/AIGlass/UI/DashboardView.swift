@@ -120,8 +120,8 @@ private struct OverviewTab: View {
     var statsStore: DailyStatsStore? = nil
     let settings: AppSettings
 
-    /// 서비스당 표시 순서: 5h → 주간 → 일일 (호버 카드와 동일 의미론).
-    private static let kindOrder: [LimitWindow.Kind] = [.session5h, .weekly, .daily]
+    /// 서비스당 표시 순서: 5h → 주간 → 월간 → 일일 (호버 카드와 동일 의미론).
+    private static let kindOrder: [LimitWindow.Kind] = [.session5h, .weekly, .monthly, .daily]
 
     var body: some View {
         let now = Date()

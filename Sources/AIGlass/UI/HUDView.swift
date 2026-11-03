@@ -348,8 +348,8 @@ struct HoverCard: View {
     var crit: Double = 90
     var onTap: () -> Void
 
-    /// 서비스당 표시 순서: 5h → 주간 → 일일. 존재하는 윈도우만.
-    private static let kindOrder: [LimitWindow.Kind] = [.session5h, .weekly, .daily]
+    /// 서비스당 표시 순서: 5h → 주간 → 월간 → 일일. 존재하는 윈도우만.
+    private static let kindOrder: [LimitWindow.Kind] = [.session5h, .weekly, .monthly, .daily]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {

@@ -270,6 +270,8 @@ struct OnboardingView: View {
             return fm.fileExists(atPath: home.appendingPathComponent(".claude").path)
         case .codex:
             return fm.fileExists(atPath: home.appendingPathComponent(".codex").path)
+        case .kimi:
+            return fm.fileExists(atPath: home.appendingPathComponent(".kimi-code").path)
         case .gemini:
             return fm.fileExists(atPath: home.appendingPathComponent(".gemini").path)
                 || fm.fileExists(atPath: home.appendingPathComponent(".gemini/antigravity-cli").path)

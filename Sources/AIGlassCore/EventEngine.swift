@@ -171,6 +171,7 @@ public final class EventEngine {
         case .session5h: return 0
         case .daily:     return 1
         case .weekly:    return 2
+        case .monthly:   return 3
         }
     }
 

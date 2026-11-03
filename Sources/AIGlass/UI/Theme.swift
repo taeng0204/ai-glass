@@ -15,6 +15,7 @@ enum Theme {
         case .claude: return (0.93, 0.60, 0.47)  // 테라코타 파스텔 #EE9978
         case .codex: return (0.31, 0.79, 0.64)   // ChatGPT 그린 파스텔 #4FC9A3
         case .gemini: return (0.47, 0.66, 0.97)  // 구글 블루 파스텔 #78A8F7
+        case .kimi: return (0.95, 0.41, 0.50)    // 로즈 레드 파스텔 #F36980 (CyBiasBench의 Kimi 레드를 기존 파스텔 톤에 맞춤)
         }
     }
     /// 사용률 상태 색. warn/crit은 설정 임계값 주입용 (기본 70/90 — 기존 호출부 호환).

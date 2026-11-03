@@ -392,13 +392,14 @@ public final class UsageStore {
     /// - daily: nil (기존 resetsAt 사용)
     /// 계산 결과가 now 이전이면(이미 리셋됨) nil. 이벤트 없으면 nil.
     public func approxFullReset(service: ServiceID, kind: LimitWindow.Kind, now: Date) -> Date? {
-        guard kind != .daily else { return nil }
+        guard kind != .daily, kind != .monthly else { return nil }
         // O(1) 캐시 조회 — WavePill이 30fps로 호출하므로 events 전체 스캔 금지.
         guard let latest = lastEventTimestamp[service] else { return nil }
         let interval: TimeInterval
         switch kind {
         case .session5h: interval = 300 * 60
         case .weekly:    interval = 7 * 24 * 3600
+        case .monthly:   return nil   // 월 총량은 구독 주기 기준이라 이벤트로 근사 불가
         case .daily:     return nil
         }
         let candidate = latest.addingTimeInterval(interval)

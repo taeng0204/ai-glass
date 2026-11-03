@@ -21,6 +21,7 @@ public enum CostEstimator {
         ("gpt", Rate(input: 1.25, output: 10.0)),
         ("codex", Rate(input: 1.25, output: 10.0)),
         ("gemini", Rate(input: 1.25, output: 10.0)),
+        ("kimi", Rate(input: 2.0, output: 10.0)),   // K3.1 Pro 공개 API 단가(구독 실비 아님)
     ]
 
     private static let fallback = Rate(input: 3.0, output: 15.0)
@@ -38,6 +39,7 @@ public enum CostEstimator {
         if m.contains("haiku") { return Rate(input: 1.0, output: 5.0) }
         if m.contains("gpt") || m.contains("codex") { return Rate(input: 1.25, output: 10.0) }
         if m.contains("gemini") { return Rate(input: 1.25, output: 10.0) }
+        if m.contains("kimi") { return Rate(input: 2.0, output: 10.0) }
         return fallback
     }
 

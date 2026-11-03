@@ -21,6 +21,43 @@ public final class ClaudeCollector {
 }
 
 @MainActor
+public final class KimiCollector {
+    private let root: URL
+    private let reader = IncrementalLineReader()
+    private var projectCache: [String: String?] = [:]
+
+    public init(root: URL) { self.root = root }
+
+    /// wire.jsonl 위치: `<session>/agents/<agent>/wire.jsonl` → 세션 폴더의 state.json에서 cwd를 읽는다.
+    private func project(for file: URL) -> String? {
+        let sessionDir = file.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        if let cached = projectCache[sessionDir.path] { return cached }
+        let result = (try? Data(contentsOf: sessionDir.appendingPathComponent("state.json")))
+            .flatMap { KimiLogParser.projectName(fromStateJSON: $0) }
+        projectCache[sessionDir.path] = result
+        return result
+    }
+
+    /// 새 이벤트가 추가됐으면 true (한도 즉시 갱신 트리거용).
+    @discardableResult
+    public func collect(into store: UsageStore) -> Bool {
+        var batch: [(TokenEvent, String?)] = []
+        for file in LogLocator.recentFiles(under: root, suffix: "wire.jsonl") {
+            let proj = project(for: file)
+            let fileKey = file.deletingLastPathComponent().deletingLastPathComponent()
+                .deletingLastPathComponent().lastPathComponent
+            for line in reader.newLines(of: file) {
+                if let parsed = KimiLogParser.parse(line: line, fileKey: fileKey, project: proj) {
+                    batch.append((parsed.event, parsed.key))
+                }
+            }
+        }
+        if !batch.isEmpty { store.addEvents(batch) }
+        return !batch.isEmpty
+    }
+}
+
+@MainActor
 public final class CodexCollector {
     private let root: URL
     private let reader = IncrementalLineReader()

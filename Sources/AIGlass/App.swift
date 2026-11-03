@@ -92,6 +92,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects"))
     lazy var codexCollector = CodexCollector(
         root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/sessions"))
+    lazy var kimiCollector = KimiCollector(
+        root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".kimi-code/sessions"))
     lazy var geminiCollector = GeminiCollector(
         root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".gemini/tmp"),
         dailyQuota: settings.geminiDailyQuota)
@@ -154,6 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             home + "/.codex/sessions",
             home + "/.gemini/tmp",
             home + "/.gemini/antigravity-cli",
+            home + "/.kimi-code/sessions",
         ]) { [weak self] in
             MainActor.assumeIsolated { self?.refresh() }
         }
@@ -161,8 +164,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Claude 한도: 시작 직후에는 Keychain 허용 타이밍 때문에 짧게 재시도하고, 이후 60초 주기로 유지.
         startInitialClaudeLimitWarmup()
         Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.pollClaudeLimits() }
+            Task { @MainActor in
+                self?.pollClaudeLimits()
+                self?.pollKimiLimits()
+            }
         }
+        pollKimiLimits()
 
         // 새 버전 확인: 시작 15초 후 1회(네트워크/UI 워밍업 뒤) + 이후 24시간마다.
         DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
@@ -387,6 +394,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return true
     }
 
+    private var kimiLimitInFlight = false
+
+    /// Kimi 한도 조회. 액세스 토큰 수명이 15분이라 Kimi CLI가 갱신해 둔 유효 토큰이 있을 때만 호출하고,
+    /// 만료 상태면 마지막으로 가져온 값을 그대로 유지한다(토큰 갱신은 CLI 몫 — 로그인 보호).
+    func pollKimiLimits() {
+        guard settings.enabledServices.contains(.kimi), !kimiLimitInFlight else { return }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        guard let creds = KimiCredentials.loadValid(home: home) else { return }
+        kimiLimitInFlight = true
+        Task { @MainActor [weak self] in
+            defer { self?.kimiLimitInFlight = false }
+            guard let result = try? await KimiUsageAPI.fetch(token: creds.accessToken,
+                                                              base: KimiUsageAPI.baseURL(home: home)),
+                  let self, result.statusCode / 100 == 2, let windows = result.windows else { return }
+            self.store.setLimits(windows, for: .kimi)
+            self.updateStatusTitle()
+            self.evaluateEvents()
+        }
+    }
+
     /// GitHub 최신 릴리스를 확인해 새 버전이면 대시보드 배지를 켜고, 버전당 1회 알림을 보낸다.
     /// 자동 설치는 하지 않는다. swift run(번들 버전 없음)에서는 건너뜀.
     func checkForUpdates() {
@@ -420,6 +447,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         claudeCollector.collect(into: store)
         codexCollector.collect(into: store)
         geminiCollector.collect(into: store)
+        // 새 Kimi 이벤트 직후엔 CLI가 방금 토큰을 갱신했을 가능성이 높아 한도를 바로 조회한다.
+        if kimiCollector.collect(into: store) { pollKimiLimits() }
         updateStatusTitle()
         evaluateComebackIfDue()
         evaluateEvents()

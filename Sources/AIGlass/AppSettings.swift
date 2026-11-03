@@ -96,6 +96,7 @@ final class AppSettings {
         static let launchAtLogin = "aiglass.launchAtLogin"
         static let hudFrame = "aiglass.hudFrame"
         static let enabledServices = "aiglass.enabledServices"
+        static let seenServices = "aiglass.seenServices"
         static let hudShowsPercent = "aiglass.hudShowsPercent"
         static let hudShowsCountdown = "aiglass.hudShowsCountdown"
         static let menubarMode = "aiglass.menubarMode"
@@ -279,7 +280,16 @@ final class AppSettings {
         onboardingCompleted = defaults.object(forKey: Key.onboardingCompleted) as? Bool ?? false
         let raw = defaults.stringArray(forKey: Key.enabledServices) ?? []
         let parsed = Set(raw.compactMap(ServiceID.init(rawValue:)))
-        enabledServices = parsed.isEmpty ? Set(ServiceID.allCases) : parsed
+        var enabled = parsed.isEmpty ? Set(ServiceID.allCases) : parsed
+        // 앱 업데이트로 새 서비스가 생기면, 이 Mac에서 감지될 때 1회 자동으로 켠다(이후 사용자가 끄면 존중).
+        // seenServices 키가 생기기 전(Kimi 추가 이전) 버전에는 세 서비스만 있었다.
+        let seen = Set((defaults.stringArray(forKey: Key.seenServices) ?? ["claude", "codex", "gemini"])
+            .compactMap(ServiceID.init(rawValue:)))
+        for svc in ServiceID.allCases where !seen.contains(svc) && OnboardingView.isDetected(svc) {
+            enabled.insert(svc)
+        }
+        defaults.set(ServiceID.allCases.map(\.rawValue).sorted(), forKey: Key.seenServices)
+        enabledServices = enabled
         // 메뉴바 항목: 신 포맷 키가 있으면 그대로, 없으면 구 menubarMode에서 1회 마이그레이션.
         if let rawItems = defaults.stringArray(forKey: Key.menubarItems) {
             menubarItems = Set(rawItems.compactMap(MenubarItem.init(rawValue:)))
