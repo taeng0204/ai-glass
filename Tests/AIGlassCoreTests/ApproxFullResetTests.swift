@@ -4,7 +4,7 @@ import Testing
 
 @MainActor @Test func approxFullResetSession5hCalculatesCorrectly() {
     let now = ISO8601.date("2026-06-11T10:00:00Z")!
-    let store = UsageStore()
+    let store = UsageStore(clock: { now })
     // 60분 전 이벤트 → 마지막 이벤트 + 300분 = 240분 후
     let e = TokenEvent(service: .codex, timestamp: now.addingTimeInterval(-60 * 60),
                        model: "codex", inputTokens: 1, outputTokens: 0,
@@ -20,7 +20,7 @@ import Testing
 
 @MainActor @Test func approxFullResetWeeklyCalculatesCorrectly() {
     let now = ISO8601.date("2026-06-11T10:00:00Z")!
-    let store = UsageStore()
+    let store = UsageStore(clock: { now })
     // 1일 전 이벤트 → 마지막 이벤트 + 7일 = 6일 후
     let e = TokenEvent(service: .claude, timestamp: now.addingTimeInterval(-24 * 3600),
                        model: "claude", inputTokens: 1, outputTokens: 0,
@@ -35,7 +35,7 @@ import Testing
 
 @MainActor @Test func approxFullResetReturnsNilWhenPast() {
     let now = ISO8601.date("2026-06-11T10:00:00Z")!
-    let store = UsageStore()
+    let store = UsageStore(clock: { now })
     // 6시간 전 이벤트 + 300분(5h) = 1시간 전 → 과거 → nil
     let e = TokenEvent(service: .codex, timestamp: now.addingTimeInterval(-6 * 3600),
                        model: "codex", inputTokens: 1, outputTokens: 0,
@@ -47,7 +47,7 @@ import Testing
 
 @MainActor @Test func approxFullResetReturnsNilForDaily() {
     let now = ISO8601.date("2026-06-11T10:00:00Z")!
-    let store = UsageStore()
+    let store = UsageStore(clock: { now })
     let e = TokenEvent(service: .claude, timestamp: now.addingTimeInterval(-60),
                        model: "claude", inputTokens: 1, outputTokens: 0,
                        cacheReadTokens: 0, cacheCreationTokens: 0)
@@ -58,7 +58,7 @@ import Testing
 
 @MainActor @Test func approxFullResetReturnsNilWhenNoEvents() {
     let now = ISO8601.date("2026-06-11T10:00:00Z")!
-    let store = UsageStore()
+    let store = UsageStore(clock: { now })
 
     #expect(store.approxFullReset(service: .claude, kind: .session5h, now: now) == nil)
     #expect(store.approxFullReset(service: .codex, kind: .weekly, now: now) == nil)

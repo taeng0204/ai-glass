@@ -4,7 +4,7 @@ import Testing
 
 @MainActor
 private func makeStore(now: Date) -> UsageStore {
-    let store = UsageStore()
+    let store = UsageStore(clock: { now })
     func ev(minutesAgo: Double, model: String, total: Int, service: ServiceID = .claude) -> (TokenEvent, String?) {
         let e = TokenEvent(service: service, timestamp: now.addingTimeInterval(-minutesAgo * 60),
                            model: model, inputTokens: total, outputTokens: 0,
@@ -49,7 +49,7 @@ private func makeStore(now: Date) -> UsageStore {
 
 @MainActor @Test func activityLevelReactsToRecentActivity() {
     let now = ISO8601.date("2026-06-10T12:00:00Z")!
-    let store = UsageStore()
+    let store = UsageStore(clock: { now })
     let recent = TokenEvent(service: .claude, timestamp: now.addingTimeInterval(-60), model: "m",
                             inputTokens: 30_000, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0)
     store.addEvents([(recent, nil)])
@@ -89,7 +89,7 @@ private func makeStore(now: Date) -> UsageStore {
 
 @MainActor @Test func recentActivityShareIncludesGeminiRequests() {
     let now = ISO8601.date("2026-06-10T12:00:00Z")!
-    let store = UsageStore()
+    let store = UsageStore(clock: { now })
     store.setGeminiRequests([
         now.addingTimeInterval(-60),
         now.addingTimeInterval(-3600),
@@ -101,7 +101,7 @@ private func makeStore(now: Date) -> UsageStore {
 
 @MainActor @Test func sessionSummaryFormatsTokensProjectCost() {
     let now = ISO8601.date("2026-06-10T12:00:00Z")!
-    let store = UsageStore()
+    let store = UsageStore(clock: { now })
     func ev(minutesAgo: Double, project: String?, output: Int) -> (TokenEvent, String?) {
         (TokenEvent(service: .claude, timestamp: now.addingTimeInterval(-minutesAgo * 60),
                     model: "claude-opus-4-8", inputTokens: 0, outputTokens: output,
@@ -123,7 +123,7 @@ private func makeStore(now: Date) -> UsageStore {
 
 @MainActor @Test func projectServiceBreakdownGroupsAndSorts() {
     let now = ISO8601.date("2026-06-10T12:00:00Z")!
-    let store = UsageStore()
+    let store = UsageStore(clock: { now })
     func ev(_ project: String, _ service: ServiceID, _ total: Int) -> (TokenEvent, String?) {
         (TokenEvent(service: service, timestamp: now.addingTimeInterval(-3600),
                     model: "claude-opus", inputTokens: total, outputTokens: 0,
@@ -149,13 +149,13 @@ private func makeStore(now: Date) -> UsageStore {
 
 @MainActor @Test func sessionSummaryNilWhenNoEvents() {
     let now = ISO8601.date("2026-06-10T12:00:00Z")!
-    let store = UsageStore()
+    let store = UsageStore(clock: { now })
     #expect(store.sessionSummary(service: .claude, from: now.addingTimeInterval(-3600), to: now) == nil)
 }
 
 @MainActor @Test func sessionSummaryOmitsProjectAndTinyCost() {
     let now = ISO8601.date("2026-06-10T12:00:00Z")!
-    let store = UsageStore()
+    let store = UsageStore(clock: { now })
     // 프로젝트 nil, 비용 극소(haiku 1000 input → $0.000001) → 두 절 모두 생략
     let e = TokenEvent(service: .claude, timestamp: now.addingTimeInterval(-600),
                        model: "claude-haiku", inputTokens: 1000, outputTokens: 0,
@@ -181,7 +181,7 @@ private func makeEvent(at date: Date, service: ServiceID = .claude) -> (event: T
     // 첫 addEvents는 8일치 일괄 적재 — 공백 기록 없어야 함
     // 최근 날짜를 사용해 retention 컷오프를 통과
     let now = Date()
-    let store = UsageStore()
+    let store = UsageStore(clock: { now })
     // 4h 전 이벤트를 넣어도 첫 로드이므로 pendingComebackGap 없음
     store.addEvents([makeEvent(at: now.addingTimeInterval(-4 * 3600))])
     #expect(store.consumeComebackGap() == nil)
@@ -190,7 +190,7 @@ private func makeEvent(at date: Date, service: ServiceID = .claude) -> (event: T
 @MainActor @Test func comebackDetectedAfterGap() {
     // 두 번째 addEvents에서 gap ≥ 3h 이면 감지
     let now = Date()
-    let store = UsageStore()
+    let store = UsageStore(clock: { now })
 
     // 첫 로드: now-1h 이벤트
     store.addEvents([makeEvent(at: now.addingTimeInterval(-3600))])
@@ -199,7 +199,7 @@ private func makeEvent(at date: Date, service: ServiceID = .claude) -> (event: T
     // 두 번째 배치: now 이벤트 (gap from now-1h = 1h, but wait we need gap ≥ 3h)
     // gap = now - (now-1h) = 1h. Use a batch that is 4h after the first event.
     // First event: now-5h, Second event: now-1h → gap = 4h ≥ 3h
-    let store2 = UsageStore()
+    let store2 = UsageStore(clock: { now })
     store2.addEvents([makeEvent(at: now.addingTimeInterval(-5 * 3600))])
     _ = store2.consumeComebackGap()
 
@@ -212,7 +212,7 @@ private func makeEvent(at date: Date, service: ServiceID = .claude) -> (event: T
 @MainActor @Test func comebackNotFiredWhenGapBelowThreshold() {
     // gap < 3h → nil
     let now = Date()
-    let store = UsageStore()
+    let store = UsageStore(clock: { now })
 
     // 첫 로드: now-3h
     store.addEvents([makeEvent(at: now.addingTimeInterval(-3 * 3600))])
@@ -226,7 +226,7 @@ private func makeEvent(at date: Date, service: ServiceID = .claude) -> (event: T
 @MainActor @Test func consumeReturnsNilAfterConsume() {
     // consume 후 재호출 → nil
     let now = Date()
-    let store = UsageStore()
+    let store = UsageStore(clock: { now })
 
     // 첫 로드: now-5h
     store.addEvents([makeEvent(at: now.addingTimeInterval(-5 * 3600))])
@@ -243,7 +243,7 @@ private func makeEvent(at date: Date, service: ServiceID = .claude) -> (event: T
 @MainActor @Test func comebackGapUsesMaxTimestampAsBaseline() {
     // lastKnownMaxTimestamp는 배치 내 max로 갱신 — 오래된 이벤트 재추가 시 gap 오발화 없음
     let now = Date()
-    let store = UsageStore()
+    let store = UsageStore(clock: { now })
 
     // 첫 로드: now-6h, now-5h, now-4h 이벤트 혼재 (max = now-4h)
     store.addEvents([
@@ -268,7 +268,7 @@ private func makeEvent(at date: Date, service: ServiceID = .claude) -> (event: T
     // rotation 재파싱: 배치에 이미 추가된(dedup) 옛 이벤트가 섞여도
     // gap은 **실제 추가된** 이벤트의 min timestamp로 계산되어야 한다.
     let now = Date()
-    let store = UsageStore()
+    let store = UsageStore(clock: { now })
 
     func keyedEvent(at date: Date, key: String) -> (event: TokenEvent, dedupKey: String?) {
         let e = TokenEvent(service: .claude, timestamp: date,

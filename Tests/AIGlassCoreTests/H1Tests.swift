@@ -66,7 +66,7 @@ private let nonSessionMetaLine = """
 
 @MainActor @Test func recentShareReturnsProportions() {
     let now = ISO8601.date("2026-06-10T12:00:00Z")!
-    let store = UsageStore()
+    let store = UsageStore(clock: { now })
 
     func ev(_ service: ServiceID, minutesAgo: Double, total: Int) -> (TokenEvent, String?) {
         let e = TokenEvent(service: service, timestamp: now.addingTimeInterval(-minutesAgo * 60),
@@ -89,7 +89,7 @@ private let nonSessionMetaLine = """
 
 @MainActor @Test func recentShareEmptyWhenNoActivity() {
     let now = ISO8601.date("2026-06-10T12:00:00Z")!
-    let store = UsageStore()
+    let store = UsageStore(clock: { now })
     #expect(store.recentShare(windowMinutes: 3, now: now).isEmpty)
 }
 
@@ -97,7 +97,7 @@ private let nonSessionMetaLine = """
 
 @MainActor @Test func projectBreakdownAggregatesAndExcludesNil() {
     let now = ISO8601.date("2026-06-10T12:00:00Z")!
-    let store = UsageStore()
+    let store = UsageStore(clock: { now })
 
     func ev(_ project: String?, minutesAgo: Double, total: Int) -> (TokenEvent, String?) {
         let e = TokenEvent(service: .claude, timestamp: now.addingTimeInterval(-minutesAgo * 60),
@@ -126,7 +126,7 @@ private let nonSessionMetaLine = """
 
 @MainActor @Test func dailyTotalsByServiceReturnsPerServiceRows() {
     let now = ISO8601.date("2026-06-10T12:00:00Z")!
-    let store = UsageStore()
+    let store = UsageStore(clock: { now })
 
     func ev(_ service: ServiceID, hoursAgo: Double, total: Int) -> (TokenEvent, String?) {
         let e = TokenEvent(service: service, timestamp: now.addingTimeInterval(-hoursAgo * 3600),
@@ -176,7 +176,7 @@ private let nonSessionMetaLine = """
 
 @MainActor @Test func dailyTotalsByServiceIsDeterministicallySorted() {
     let now = ISO8601.date("2026-06-10T12:00:00Z")!
-    let store = UsageStore()
+    let store = UsageStore(clock: { now })
 
     func ev(_ service: ServiceID, hoursAgo: Double, total: Int) -> (TokenEvent, String?) {
         let e = TokenEvent(service: service, timestamp: now.addingTimeInterval(-hoursAgo * 3600),

@@ -32,7 +32,12 @@ public final class UsageStore {
     /// 다음 consumeComebackGap() 호출 시 반환할 공백(초). nil이면 미감지.
     private var pendingComebackGap: TimeInterval?
 
-    public init() {}
+    /// 보관 컷오프 등 "현재 시각" 기준. 테스트에서 고정 시각을 주입한다(프로덕션은 기본 Date()).
+    private let clock: () -> Date
+
+    public init() { self.clock = { Date() } }
+
+    init(clock: @escaping () -> Date) { self.clock = clock }
 
     public func setLimits(_ windows: [LimitWindow], for service: ServiceID) {
         setLimits(windows, for: service, at: Date())
@@ -67,7 +72,7 @@ public final class UsageStore {
 
     public func addEvents(_ batch: [(event: TokenEvent, dedupKey: String?)]) {
         // 수집기는 최근 8일 파일만 읽지만, 파일 내 오래된 라인 방어용 컷오프
-        let cutoff = Date().addingTimeInterval(-Double(Self.retentionDays) * 24 * 3600)
+        let cutoff = clock().addingTimeInterval(-Double(Self.retentionDays) * 24 * 3600)
         var added = false
         // 컴백 감지는 **실제 추가된** 이벤트 기준이어야 한다 — dedup으로 버려진 옛 이벤트
         // (rotation 재파싱 등)가 batchMin에 섞이면 gap이 음수가 되어 미발화한다.
