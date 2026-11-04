@@ -2,11 +2,11 @@ import AppKit
 import QuartzCore
 import AIGlassCore
 
-/// 메뉴바 콘텐츠를 GPU 합성 오버레이로 그린다 (펄스 바 웨이브 전용).
+/// 메뉴바 콘텐츠를 GPU 합성 오버레이로 그린다. 웨이브는 스타일별 `WaveRenderer`(MenubarWaves.swift)가 맡는다.
 ///
 /// 배경: NSStatusItem 안에서 애니메이션이 돌면 macOS가 매 프레임 레이어 트리를 CPU로 스냅샷(`_updateReplicants`)해
 /// 앱 CPU가 수십 %까지 오른다. 그래서 상태 아이템은 "자리"(length)만 잡고, 실제 내용은 그 위에 겹친 투명 NSPanel에
-/// 그린다. 펄스 바 높이는 CAKeyframeAnimation으로 한 번 등록해 두면 화면 합성기가 매 프레임 처리하고,
+/// 그린다. 웨이브 애니메이션은 Core Animation으로 한 번 등록해 두면 화면 합성기가 매 프레임 처리하고,
 /// 앱은 1초에 한 번만 텍스트·색·진폭을 갱신한다.
 ///
 /// 배치·폰트·색은 `MenubarContentView`(SwiftUI)와 동일하게 맞춘다.
@@ -22,12 +22,9 @@ final class MenubarOverlay {
     private let panel: NSPanel
     private let root = PassThroughView()
 
-    // 웨이브
-    private let gradient = CAGradientLayer()
-    private let maskLayer = CALayer()
-    private var bars: [CALayer] = []
-    private var lastAmplitude = -1.0
-    private var lastStopsKey = ""
+    // 웨이브 (스타일별 렌더러 — MenubarWaves.swift)
+    private var renderer: WaveRenderer?
+    private var rendererStyle: WaveStyle?
 
     // 웨이브 옆 정보 묶음 (점 + % + 카운트다운) — 서비스 로테이션 시 슬라이드 전환
     private let info = PassThroughView()
@@ -83,8 +80,7 @@ final class MenubarOverlay {
     private func candidates() -> [ServiceID?] { rotation.isEmpty ? [nil] : rotation.map { Optional($0) } }
 
     private let height: CGFloat = 22
-    private let waveW: CGFloat = 36, waveH: CGFloat = 16
-    private let barW: CGFloat = 3, barGap: CGFloat = 2.5
+    private let waveH: CGFloat = 16
 
     private let textFont = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .medium)
     private let pctFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .bold)
@@ -120,23 +116,6 @@ final class MenubarOverlay {
         root.frame = NSRect(x: 0, y: 0, width: 100, height: height)
         root.autoresizingMask = [.width, .height]
         panel.contentView = root
-
-        // 웨이브 레이어 (마스크 = 막대 7개)
-        maskLayer.frame = CGRect(x: 0, y: 0, width: waveW, height: waveH)
-        for i in 0..<7 {
-            let b = CALayer()
-            b.backgroundColor = NSColor.white.cgColor
-            b.cornerRadius = barW / 2
-            b.bounds = CGRect(x: 0, y: 0, width: barW, height: 8)
-            b.position = CGPoint(x: barW / 2 + CGFloat(i) * (barW + barGap), y: waveH / 2)
-            maskLayer.addSublayer(b)
-            bars.append(b)
-        }
-        gradient.startPoint = CGPoint(x: 0, y: 0.5)
-        gradient.endPoint = CGPoint(x: 1, y: 0.5)
-        gradient.mask = maskLayer
-        gradient.isHidden = true
-        root.layer?.addSublayer(gradient)
 
         // 정보 묶음
         info.wantsLayer = true
@@ -227,7 +206,7 @@ final class MenubarOverlay {
         // 전부 숨기고 아래에서 쓰는 것만 보인다.
         for l in [star, today, rate, usagePct, resetCd] + seps { l.isHidden = true }
         usageDot.isHidden = true
-        gradient.isHidden = true
+        renderer?.layer.isHidden = true
         info.isHidden = true
 
         var x: CGFloat = 0
@@ -265,9 +244,10 @@ final class MenubarOverlay {
                 switch it {
                 case .wave:
                     x += 4
-                    gradient.frame = CGRect(x: x, y: (height - waveH) / 2, width: waveW, height: waveH)
-                    gradient.isHidden = false
-                    x += waveW + 8
+                    let r = ensureRenderer()
+                    r.layer.frame = CGRect(x: x, y: (height - waveH) / 2, width: r.width, height: waveH)
+                    r.layer.isHidden = false
+                    x += r.width + 8
                     x += layoutInfo(at: x, current: current, curPercent: curPercent, maxPercent: maxPercent, now: now)
                     // 끝 패딩 — 라벨 자체가 오른쪽에 ~2pt 안쪽 여백을 갖고 있어서(NSTextField 셀 inset) 2만 더하면
                     // 보이는 오른쪽 여백이 왼쪽 패딩(4)과 같아진다.
@@ -311,10 +291,12 @@ final class MenubarOverlay {
             }
         }
 
-        updateGradient(now: now)
         CATransaction.commit()
 
-        updateAmplitude(now: now)
+        if let r = renderer, !r.layer.isHidden {
+            let level = max(store.activityLevel(now: now), store.requestActivityLevel(now: now))
+            r.update(share: activeShare(now: now), level: level, percent: curPercent ?? maxPercent, now: now)
+        }
 
         let width = max(1, x)
         if abs(width - lastWidth) > 0.5 { lastWidth = width; item?.length = width }
@@ -403,62 +385,26 @@ final class MenubarOverlay {
         return w
     }
 
-    /// share 비례 가로 그라데이션 — 값이 바뀔 때만 갱신.
-    private func updateGradient(now: Date) {
-        let full = store.recentActivityShare(now: now).filter { enabled.contains($0.key) }
-        let grand = full.values.reduce(0, +)
-        let active = grand > 0
-            ? ServiceID.allCases.compactMap { s -> (ServiceID, Double)? in
-                guard let v = full[s], v > 0 else { return nil }
-                return (s, v / grand)
-            }
-            : []
-        let key = active.map { "\($0.0.rawValue):\(Int($0.1 * 100))" }.joined(separator: ",")
-        guard key != lastStopsKey else { return }
-        lastStopsKey = key
-        var colors: [CGColor] = [], locs: [NSNumber] = []
-        if active.isEmpty {
-            colors = [CGColor(red: 0.63, green: 0.13, blue: 0.94, alpha: 0.9), CGColor(red: 0, green: 0, blue: 1, alpha: 0.7)]
-            locs = [0, 1]
-        } else {
-            var cursor = 0.0
-            for (i, e) in active.enumerated() {
-                let end = cursor + e.1
-                let bs = i == 0 ? cursor : max(cursor, cursor - 0.08)
-                let be = i == active.count - 1 ? 1.0 : min(1.0, end - 0.08)
-                for loc in [bs, max(bs, be)] {
-                    colors.append(cgColor(e.0))
-                    locs.append(NSNumber(value: loc))
-                }
-                cursor = end
-            }
-        }
-        gradient.colors = colors
-        gradient.locations = locs
+    /// 설정된 웨이브 스타일의 렌더러를 보장한다 (스타일이 바뀌면 교체).
+    private func ensureRenderer() -> WaveRenderer {
+        if let r = renderer, rendererStyle == settings.waveStyle { return r }
+        renderer?.layer.removeFromSuperlayer()
+        let r = WaveRenderers.make(settings.waveStyle)
+        r.layer.isHidden = true
+        root.layer?.addSublayer(r.layer)
+        renderer = r
+        rendererStyle = settings.waveStyle
+        return r
     }
 
-    /// 진폭이 0.04 이상 달라질 때만 막대 애니메이션을 다시 등록한다 (절대 시간 위상 → 이어서 재생).
-    private func updateAmplitude(now: Date) {
-        let level = max(store.activityLevel(now: now), store.requestActivityLevel(now: now))
-        let amplitude = 0.15 + 0.85 * level
-        guard abs(amplitude - lastAmplitude) > 0.04 else { return }
-        lastAmplitude = amplitude
-        let tNow = now.timeIntervalSinceReferenceDate
-        let samples = 40
-        for (i, bar) in bars.enumerated() {
-            let omega = 2.2 + Double(i) * 0.13
-            let phase0 = tNow * omega + Double(i) * 0.9
-            // 기존 식: h = 4 + 12·amp·(0.5 + 0.5·sin(phase))
-            let values = (0...samples).map { k -> NSNumber in
-                let ph = phase0 + 2 * Double.pi * Double(k) / Double(samples)
-                return NSNumber(value: 4 + 12 * amplitude * (0.5 + 0.5 * sin(ph)))
-            }
-            let anim = CAKeyframeAnimation(keyPath: "bounds.size.height")
-            anim.values = values
-            anim.calculationMode = .cubic
-            anim.duration = 2 * Double.pi / omega
-            anim.repeatCount = .infinity
-            bar.add(anim, forKey: "h")
+    /// enabled 서비스만 남긴 최근 활동 비율 (합 1.0 재정규화). 활동 없으면 빈 배열.
+    private func activeShare(now: Date) -> [(ServiceID, Double)] {
+        let full = store.recentActivityShare(now: now).filter { enabled.contains($0.key) }
+        let grand = full.values.reduce(0, +)
+        guard grand > 0 else { return [] }
+        return ServiceID.allCases.compactMap { s in
+            guard let v = full[s], v > 0 else { return nil }
+            return (s, v / grand)
         }
     }
 

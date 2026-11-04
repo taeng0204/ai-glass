@@ -220,9 +220,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// GPU 합성 오버레이 (펄스 바 한정). 켜져 있으면 menubarHost는 없다.
     private var menubarOverlay: MenubarOverlay?
 
-    /// 오버레이 사용 조건: 웨이브가 없거나 펄스 바 스타일. 나머지 4개 스타일은 아직 오버레이로 못 그려서 기존 SwiftUI 방식.
+    /// 오버레이 사용 조건: 웨이브가 없거나, 그 스타일의 오버레이 렌더러가 있을 때. 없는 스타일은 기존 SwiftUI 방식.
     private var usesMenubarOverlay: Bool {
-        !settings.menubarItems.contains(.wave) || settings.waveStyle == .pulseBars
+        !settings.menubarItems.contains(.wave) || WaveRenderers.supported.contains(settings.waveStyle)
     }
 
     /// 상태 아이템에 다중 항목 콘텐츠 호스팅 뷰를 1회 설치하고 폭을 콘텐츠에 맞춘다.
