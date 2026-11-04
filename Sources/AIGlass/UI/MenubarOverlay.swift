@@ -47,6 +47,41 @@ final class MenubarOverlay {
 
     private var lastWidth: CGFloat = 0
 
+    // 폭 안정화 — 로테이션으로 퍼센트 자릿수(9% ↔ 21%)·카운트다운 길이가 달라져도 메뉴바가 꿈틀대지 않도록,
+    // 로테이션 후보 중 가장 넓은 값만큼 자리를 예약한다. 줄이는 건 60초 이상 계속 좁을 때만 천천히 (래칫).
+    private struct WidthRatchet {
+        var width: CGFloat = 0
+        var narrowSince: Date?
+        mutating func update(needed: CGFloat, now: Date) -> CGFloat {
+            if needed >= width - 0.5 {
+                width = max(width, needed)
+                narrowSince = nil
+            } else {
+                let since = narrowSince ?? now
+                narrowSince = since
+                if now.timeIntervalSince(since) > 60 { width = needed; narrowSince = nil }
+            }
+            return width
+        }
+    }
+    private var infoRatchet = WidthRatchet()
+    private var usageRatchet = WidthRatchet()
+    private var cdRatchet = WidthRatchet()
+    /// 현재 로테이션 후보 서비스 (tick마다 갱신).
+    private var rotation: [ServiceID] = []
+    private let scratch = MenubarOverlay.makeLabel()
+
+    /// 라벨과 같은 방식(sizeToFit)으로 텍스트 폭을 잰다 — 배치 폭과 어긋나지 않게.
+    private func measure(_ text: String, _ font: NSFont) -> CGFloat {
+        scratch.font = font
+        scratch.stringValue = text
+        scratch.sizeToFit()
+        return ceil(scratch.frame.width)
+    }
+    /// 퍼센트는 항상 두 자리("00%") 폭 이상을 잡아 한 자리↔두 자리 전환에도 위치가 안 움직인다.
+    private func pctSlot(_ font: NSFont) -> CGFloat { measure("00%", font) }
+    private func candidates() -> [ServiceID?] { rotation.isEmpty ? [nil] : rotation.map { Optional($0) } }
+
     private let height: CGFloat = 22
     private let waveW: CGFloat = 36, waveH: CGFloat = 16
     private let barW: CGFloat = 3, barGap: CGFloat = 2.5
@@ -180,6 +215,7 @@ final class MenubarOverlay {
         let t = now.timeIntervalSinceReferenceDate
 
         let services = ServiceID.allCases.filter { enabled.contains($0) && !(store.limits[$0]?.isEmpty ?? true) }
+        rotation = services
         let current: ServiceID? = services.isEmpty ? nil : services[Int(t / 6) % services.count]
         let curPercent = current.flatMap { displayWindow($0)?.usedPercent }
         let maxPercent = store.maxUsedPercent(in: enabled)
@@ -241,6 +277,7 @@ final class MenubarOverlay {
                     let text = MenubarContentView.formatRate(store.tokensPerMinute(windowMinutes: 5, now: now))
                     x += put(rate, text, font: textFont, color: .labelColor)
                 case .usagePercent:
+                    let startX = x
                     if let cur = current, let p = curPercent {
                         usageDot.backgroundColor = cgColor(cur)
                         usageDot.position = CGPoint(x: x + 3, y: height / 2)
@@ -250,9 +287,24 @@ final class MenubarOverlay {
                     } else {
                         x += put(usagePct, "–%", font: textFont, color: .secondaryLabelColor)
                     }
+                    var needed: CGFloat = 0
+                    for c in candidates() {
+                        if let c, let p = displayWindow(c)?.usedPercent {
+                            needed = max(needed, 10 + max(measure(Theme.formatUsagePercent(p), textFont), pctSlot(textFont)))
+                        } else {
+                            needed = max(needed, measure("–%", textFont))
+                        }
+                    }
+                    x = startX + max(x - startX, usageRatchet.update(needed: needed, now: now))
                 case .resetCountdown:
+                    let startX = x
                     let text = current.flatMap { resetText($0, now: now) } ?? "–"
                     x += put(resetCd, text, font: textFont, color: .secondaryLabelColor)
+                    var needed: CGFloat = 0
+                    for c in candidates() {
+                        needed = max(needed, measure(c.flatMap { resetText($0, now: now) } ?? "–", textFont))
+                    }
+                    x = startX + max(x - startX, cdRatchet.update(needed: needed, now: now))
                 }
             }
         }
@@ -296,7 +348,7 @@ final class MenubarOverlay {
             infoPct.sizeToFit()
             infoPct.setFrameOrigin(NSPoint(x: ix, y: (height - infoPct.frame.height) / 2))
             infoPct.isHidden = false
-            ix += ceil(infoPct.frame.width)
+            ix += max(ceil(infoPct.frame.width), pctSlot(pctFont))
         }
         if let countdown {
             gap()
@@ -309,11 +361,17 @@ final class MenubarOverlay {
             ix += ceil(infoCd.frame.width)
         }
 
-        info.frame = NSRect(x: x, y: 0, width: ix, height: height)
-        info.isHidden = ix == 0
+        // 후보 서비스 중 가장 넓은 묶음 폭만큼 예약 (내용은 왼쪽 정렬 — 점 위치가 고정된다).
+        var needed: CGFloat = 0
+        for c in candidates() {
+            needed = max(needed, infoWidth(for: c, showsPct: showsPct, showsCd: showsCd, maxPercent: maxPercent, now: now))
+        }
+        let w = max(ix, infoRatchet.update(needed: needed, now: now))
+        info.frame = NSRect(x: x, y: 0, width: w, height: height)
+        info.isHidden = w == 0
 
         // 서비스 로테이션 시 아래에서 위로 슬라이드 (기존 SwiftUI 전환과 동일)
-        if let last = lastCurrent, last != current, ix > 0 {
+        if let last = lastCurrent, last != current, w > 0 {
             let tr = CATransition()
             tr.type = .push
             tr.subtype = .fromBottom
@@ -322,7 +380,25 @@ final class MenubarOverlay {
             info.layer?.add(tr, forKey: "rotate")
         }
         lastCurrent = current
-        return ix
+        return w
+    }
+
+    /// 특정 서비스가 표시될 때의 정보 묶음 폭 (layoutInfo와 같은 규칙).
+    private func infoWidth(for c: ServiceID?, showsPct: Bool, showsCd: Bool, maxPercent: Double, now: Date) -> CGFloat {
+        var w: CGFloat = 0
+        var n = 0
+        func gap() { if n > 0 { w += 4 }; n += 1 }
+        if c != nil { gap(); w += 6 }
+        if showsPct {
+            gap()
+            let p = c.flatMap { displayWindow($0)?.usedPercent } ?? maxPercent
+            w += max(measure(Theme.formatUsagePercent(p), pctFont), pctSlot(pctFont))
+        }
+        if showsCd, let c, let cd = resetText(c, now: now) {
+            gap()
+            w += measure(cd, cdFont)
+        }
+        return w
     }
 
     /// share 비례 가로 그라데이션 — 값이 바뀔 때만 갱신.
@@ -398,7 +474,7 @@ final class MenubarOverlay {
         }
         panel.appearance = button.effectiveAppearance
         let width = max(1, lastWidth)
-        let target = NSRect(x: f.minX + (f.width - width) / 2, y: f.minY + (f.height - height) / 2,
+        let target = NSRect(x: pf.minX + (pf.width - width) / 2, y: pf.minY + (pf.height - height) / 2,
                             width: width, height: height)
         if panel.frame != target { panel.setFrame(target, display: false) }
         if !panel.isVisible { panel.orderFrontRegardless() }
