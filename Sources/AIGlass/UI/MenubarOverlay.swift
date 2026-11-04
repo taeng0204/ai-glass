@@ -462,13 +462,32 @@ final class MenubarOverlay {
 
     // MARK: - 투명 창 위치·가시성
 
-    /// 상태 아이템 위치에 투명 패널을 맞춘다. 아이템이 가려지거나 화면 밖이면(메뉴바 숨김·풀스크린·정리 앱) 패널도 숨긴다.
+    /// 메인 화면 메뉴바에서 마지막으로 보고된 상태 아이템 창 위치.
+    private var primaryFrame: NSRect?
+    private var primarySeenAt = Date.distantPast
+
+    /// 상태 아이템 위치에 투명 패널을 맞춘다.
+    ///
+    /// 모니터가 여러 대면 macOS가 화면마다 상태 아이템 복제본을 두고, `button.window`가 그 사이를 번갈아 보고한다
+    /// (예: 메인 (1202, 1073) ↔ 보조 모니터 (846, -32)). 오버레이는 메인 화면에만 그리므로, 메인 화면의 메뉴바 띠 안에서
+    /// 보고된 위치만 기억해 쓴다. 메인 위치가 한동안(8초) 안 보이면 아이템이 숨겨진 것(앞 앱 메뉴가 길어 공간 부족 등)이라
+    /// 패널도 숨긴다. 보조 모니터의 복제본은 오버레이를 그리지 않아 빈 자리로 보인다.
     private func syncPanel() {
         guard let button = item?.button, let win = button.window else { panel.orderOut(nil); return }
         observe(win)
         let f = win.frame
-        let onScreen = NSScreen.screens.contains { $0.frame.intersects(f) }
-        guard win.isVisible, f.width > 1, onScreen, win.occlusionState.contains(.visible) else {
+        let now = Date()
+        // 메뉴바 띠(visibleFrame 위 ~ 화면 맨 위) 안에 있을 때만 인정한다 (엄격한 부등호).
+        // 메인 화면 = 원점이 (0,0)인 화면 (screens 배열 순서는 디스플레이 재구성 때 순간적으로 바뀔 수 있어 쓰지 않는다).
+        if let main = NSScreen.screens.first(where: { $0.frame.origin == .zero }),
+           main.frame.maxY - main.visibleFrame.maxY > 8,
+           f.width > 1, win.isVisible, win.occlusionState.contains(.visible),
+           f.midX > main.frame.minX, f.midX < main.frame.maxX,
+           f.midY > main.visibleFrame.maxY, f.midY < main.frame.maxY {
+            primaryFrame = f
+            primarySeenAt = now
+        }
+        guard let pf = primaryFrame, now.timeIntervalSince(primarySeenAt) < 8 else {
             panel.orderOut(nil)
             return
         }
