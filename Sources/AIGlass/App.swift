@@ -135,6 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         restoreBriefingState()
+        runHistoryBackfillIfNeeded()
 
         // 글로벌 단축키 ⌘⇧U → 팝오버 토글 (Carbon 이벤트는 메인 스레드)
         hotKey = GlobalHotKey { [weak self] in
@@ -484,6 +485,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     /// 60초 디바운스로 최근 8일 이벤트 전체를 SQLite에 upsert (REPLACE 멱등).
+    /// 과거 로그 백필 — 라이브 수집기는 최근 8일만 읽어서, 앱을 새로 설치하면 30일 추이·잔디가 최근 것밖에 없다.
+    /// 시작 20초 뒤(첫 갱신과 겹치지 않게) 백그라운드에서 35일치를 읽어 통계 DB에만 채운다. 성공하면 버전을 기록해
+    /// 다시 돌지 않는다 (도중에 종료하면 기록이 없어 다음 실행에서 이어서 한다). 병합이 최댓값이라 몇 번 돌아도 안전하다.
+    private func runHistoryBackfillIfNeeded() {
+        let versionKey = "aiglass.historyBackfillVersion"
+        guard UserDefaults.standard.integer(forKey: versionKey) < HistoryBackfill.version, statsStore != nil else { return }
+        let sources = HistoryBackfillSources.standard()
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(20))
+            let events = await Task.detached(priority: .utility) {
+                HistoryBackfill.collectEvents(sources: sources)
+            }.value
+            guard let self, let statsStore = self.statsStore else { return }
+            statsStore.upsert(events: events, calendar: .utc)
+            UserDefaults.standard.set(HistoryBackfill.version, forKey: versionKey)
+        }
+    }
+
     private func persistStatsIfDue() {
         guard let statsStore else { return }
         let now = Date()
