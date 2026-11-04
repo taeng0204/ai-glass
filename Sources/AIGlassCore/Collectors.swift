@@ -150,6 +150,8 @@ public final class GeminiCollector {
     /// 변경 없으면 30초마다 대용량 로그 재파싱을 건너뛴다 (now 의존 dailyWindow만 재계산).
     private var lastRequestSignature: Date?
     private var cachedRequestDates: [Date] = []
+    /// false면 요청 수 기반 일일 추정 게이지를 게시하지 않는다 (실제 쿼터가 있을 때).
+    public var publishesDailyEstimate = true
 
     public init(root: URL, dailyQuota: Int = 1000, historyFile: URL? = nil, logDir: URL? = nil,
                 conversationsDir: URL? = nil) {
@@ -193,6 +195,8 @@ public final class GeminiCollector {
             lastRequestSignature = signature
         }
         store.setGeminiRequests(allDates)
+        // agy /usage의 실제 쿼터를 받아오는 중이면 요청 수 기반 일일 추정치는 덮어쓰지 않는다.
+        guard publishesDailyEstimate else { return }
         let window = GeminiLogParser.dailyWindow(requestDates: allDates, quota: dailyQuota, now: now)
         store.setLimits([window], for: .gemini)
 

@@ -170,6 +170,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
         pollKimiLimits()
+        pollAntigravityQuota()
+        Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.pollAntigravityQuota() }
+        }
 
         // 새 버전 확인: 시작 15초 후 1회(네트워크/UI 워밍업 뒤) + 이후 24시간마다.
         DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
@@ -394,6 +398,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return true
     }
 
+    private var agyQuotaInFlight = false
+    private var agyQuotaLastSuccess: Date?
+
+    /// Antigravity 실제 쿼터(agy /usage, Argon 그룹 기준). 성공하면 요청 수 기반 일일 추정 게이지를 대체한다.
+    /// 호출이 ~8초 걸려 5분 주기로만 돌리고, 실패하면 이전 값(또는 추정치)을 유지한다.
+    func pollAntigravityQuota() {
+        guard settings.enabledServices.contains(.gemini), !agyQuotaInFlight,
+              let agy = AntigravityQuota.locateExecutable() else { return }
+        agyQuotaInFlight = true
+        Task { @MainActor [weak self] in
+            let data = await AntigravityQuota.fetch(executable: agy)
+            guard let self else { return }
+            self.agyQuotaInFlight = false
+            guard let data, let windows = AntigravityQuota.parse(data) else { return }
+            self.agyQuotaLastSuccess = Date()
+            self.geminiCollector.publishesDailyEstimate = false
+            self.store.setLimits(windows, for: .gemini)
+            self.updateStatusTitle()
+            self.evaluateEvents()
+        }
+    }
+
     private var kimiLimitInFlight = false
 
     /// Kimi 한도 조회. 액세스 토큰 수명이 15분이라 Kimi CLI가 갱신해 둔 유효 토큰이 있을 때만 호출하고,
@@ -446,6 +472,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func refresh() {
         claudeCollector.collect(into: store)
         codexCollector.collect(into: store)
+        // agy 실제 쿼터가 30분 넘게 갱신되지 않으면 요청 수 기반 추정 게이지로 되돌린다.
+        if let last = agyQuotaLastSuccess, Date().timeIntervalSince(last) > 30 * 60 {
+            geminiCollector.publishesDailyEstimate = true
+        }
         geminiCollector.collect(into: store)
         // 새 Kimi 이벤트 직후엔 CLI가 방금 토큰을 갱신했을 가능성이 높아 한도를 바로 조회한다.
         if kimiCollector.collect(into: store) { pollKimiLimits() }
