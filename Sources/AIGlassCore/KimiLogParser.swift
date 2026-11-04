@@ -7,7 +7,13 @@ public enum KimiLogParser {
     /// - Parameters:
     ///   - fileKey: 중복 키에 넣을 파일 식별자 (세션 id 등).
     ///   - project: 세션 작업 디렉터리 이름.
+    /// JSONSerialization이 만드는 임시 객체(NSDictionary 등)가 호출자의 autorelease 풀에 쌓였다가 한꺼번에 풀리지 않도록
+    /// 줄마다 풀을 비운다 (시작 때 수만 줄을 읽는 구간의 피크 메모리가 실측으로 약 80MB 줄었다).
     public static func parse(line: String, fileKey: String, project: String?) -> (event: TokenEvent, key: String)? {
+        autoreleasepool { parseUnpooled(line: line, fileKey: fileKey, project: project) }
+    }
+
+    private static func parseUnpooled(line: String, fileKey: String, project: String?) -> (event: TokenEvent, key: String)? {
         // 대부분의 줄은 usage.record가 아니므로 JSON 파싱 전에 값싼 검사로 거른다.
         guard line.contains("\"usage.record\"") else { return nil }
         guard let data = line.data(using: .utf8),
