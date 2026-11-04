@@ -144,43 +144,12 @@ public enum HistoryBackfill {
 
     // MARK: - 스트리밍 줄 읽기
 
-    /// 파일을 4MB 청크로 읽어 줄 단위로 훑고, `marker` 바이트열이 들어 있는 줄만 String으로 만들어 `body`에 넘긴다.
-    /// 메모리는 청크 + 걸쳐 있는 한 줄 정도만 쓴다 (300MB 파일도 안전). 마지막 줄이 개행으로 끝나지 않으면
-    /// 쓰는 중이던 잘린 줄일 수 있으니, 파싱 실패로 자연스럽게 걸러지게 두고 그대로 넘긴다.
+    /// 파일을 `StreamingLines`로 훑어, `marker`가 들어 있는 줄만 `body`에 넘긴다 (정적 파일이라 마지막 줄도 포함).
+    /// 쓰는 중이던 잘린 마지막 줄은 파싱 실패로 자연스럽게 걸러진다.
     static func forEachLine(in url: URL, containing marker: String, _ body: (String) -> Void) {
-        guard let fh = try? FileHandle(forReadingFrom: url) else { return }
-        defer { try? fh.close() }
-        let needle = Array(marker.utf8)
-        var carry = Data()
-
-        func emit(_ base: UnsafeRawPointer, _ start: Int, _ len: Int) {
-            guard len >= needle.count else { return }
-            let found = needle.withUnsafeBytes { memmem(base + start, len, $0.baseAddress, needle.count) }
-            guard found != nil,
-                  let line = String(data: Data(bytes: base + start, count: len), encoding: .utf8) else { return }
-            body(line)
-        }
-
-        while let chunk = try? fh.read(upToCount: 4 << 20), !chunk.isEmpty {
-            var buf = carry
-            buf.append(chunk)
-            let consumed: Int = buf.withUnsafeBytes { raw -> Int in
-                guard let base = raw.baseAddress else { return 0 }
-                let total = raw.count
-                var start = 0
-                while start < total, let nl = memchr(base + start, 0x0A, total - start) {
-                    let end = base.distance(to: UnsafeRawPointer(nl))
-                    emit(base, start, end - start)
-                    start = end + 1
-                }
-                return start
-            }
-            carry = consumed < buf.count ? Data(buf.suffix(from: buf.startIndex + consumed)) : Data()
-        }
-        if !carry.isEmpty {
-            carry.withUnsafeBytes { raw in
-                if let base = raw.baseAddress { emit(base, 0, raw.count) }
-            }
-        }
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        StreamingLines.scan(handle, from: 0, to: size, marker: Array(marker.utf8), includeTrailing: true, body)
     }
 }

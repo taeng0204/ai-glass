@@ -10,7 +10,8 @@ public final class ClaudeCollector {
     public func collect(into store: UsageStore) {
         var batch: [(TokenEvent, String?)] = []
         for file in LogLocator.recentFiles(under: root, suffix: ".jsonl") {
-            for line in reader.newLines(of: file) {
+            // 토큰 줄만 String으로 만든다 — usage가 없는 줄(대화 본문 등)은 파싱도 안 한다.
+            for line in reader.newLines(of: file, containing: "\"usage\"") {
                 if let parsed = ClaudeLogParser.parse(line: line) {
                     batch.append(parsed)
                 }
@@ -46,7 +47,7 @@ public final class KimiCollector {
             let proj = project(for: file)
             let fileKey = file.deletingLastPathComponent().deletingLastPathComponent()
                 .deletingLastPathComponent().lastPathComponent
-            for line in reader.newLines(of: file) {
+            for line in reader.newLines(of: file, containing: "\"usage.record\"") {
                 if let parsed = KimiLogParser.parse(line: line, fileKey: fileKey, project: proj) {
                     batch.append((parsed.event, parsed.key))
                 }
@@ -80,7 +81,8 @@ public final class CodexCollector {
         var latestLimits: [LimitWindow]?
         for file in LogLocator.recentFiles(under: root, suffix: ".jsonl") {
             let proj = project(for: file)
-            for line in reader.newLines(of: file) {
+            // token_count 줄만 읽는다 — 세션 로그의 대부분(도구 출력·대화)은 건너뛴다.
+            for line in reader.newLines(of: file, containing: "\"token_count\"") {
                 guard let parsed = CodexLogParser.parse(line: line) else { continue }
                 if let event = parsed.event {
                     // rotation으로 오프셋이 리셋돼 같은 라인을 재파싱해도 중복 적재 방지
