@@ -230,3 +230,102 @@ private func makeTempDBWithTrajectoryBlob(data: Data?) throws -> String {
     defer { try? FileManager.default.removeItem(atPath: path) }
     #expect(AntigravityConversationParser.workspace(dbPath: path) == nil)
 }
+
+// MARK: - 새 포맷 (2026-11 agy 업데이트: gen_metadata에 시각이 없고 steps에 있음)
+
+/// 새 포맷 레코드: 타임스탬프(f9) 없이 최상위 f4=생성 ID.
+/// top { f4:genID, f1 { f4 { f2:input, f3:output }, f21:model } }
+private func buildNewGenMetadata(genID: String, input: Int, output: Int, model: String) -> Data {
+    let f4Tokens = varintField(2, UInt64(input)) + varintField(3, UInt64(output))
+    let f1 = lenField(4, f4Tokens) + lenField(21, Array(model.utf8))
+    return Data(lenField(4, Array(genID.utf8)) + lenField(1, f1))
+}
+
+/// steps.metadata: f12=생성 ID, f1/f7/f8 = { f1: epoch } (생성·시작·완료). nil이면 그 필드를 넣지 않는다.
+private func buildStepMetadata(genID: String, created: Int?, started: Int?, finished: Int?) -> Data {
+    var bytes: [UInt8] = []
+    if let created { bytes += lenField(1, varintField(1, UInt64(created))) }
+    if let started { bytes += lenField(7, varintField(1, UInt64(started))) }
+    if let finished { bytes += lenField(8, varintField(1, UInt64(finished))) }
+    bytes += lenField(12, Array(genID.utf8))
+    return Data(bytes)
+}
+
+private func addStepsTable(path: String, rows: [Data]) throws {
+    var db: OpaquePointer?
+    #expect(sqlite3_open(path, &db) == SQLITE_OK)
+    defer { sqlite3_close(db) }
+    #expect(sqlite3_exec(db, "CREATE TABLE steps(idx INTEGER, metadata BLOB)", nil, nil, nil) == SQLITE_OK)
+    var stmt: OpaquePointer?
+    #expect(sqlite3_prepare_v2(db, "INSERT INTO steps(idx, metadata) VALUES (?, ?)", -1, &stmt, nil) == SQLITE_OK)
+    defer { sqlite3_finalize(stmt) }
+    for (i, r) in rows.enumerated() {
+        sqlite3_bind_int64(stmt, 1, Int64(i))
+        _ = r.withUnsafeBytes { buf in
+            sqlite3_bind_blob(stmt, 2, buf.baseAddress, Int32(buf.count), SQLITE_TRANSIENT_T)
+        }
+        #expect(sqlite3_step(stmt) == SQLITE_DONE)
+        sqlite3_reset(stmt)
+    }
+}
+
+/// 회귀: 인라인 타임스탬프가 없는 새 포맷도 steps의 시각으로 읽혀야 한다 (이전엔 전부 버려져 Antigravity가 통계에 안 잡혔다).
+@Test func conversationParserReadsTimestampFromStepsInNewFormat() throws {
+    let blob = buildNewGenMetadata(genID: "gen-1", input: 5653, output: 203, model: "Claude Opus 5.5 (Medium)")
+    let path = try makeTempDB(records: [(idx: 0, data: blob, size: blob.count)])
+    defer { try? FileManager.default.removeItem(atPath: path) }
+    try addStepsTable(path: path, rows: [
+        buildStepMetadata(genID: "gen-1", created: 1_793_774_750, started: 1_793_774_754, finished: 1_793_774_755),
+    ])
+
+    let gens = AntigravityConversationParser.generations(dbPath: path)
+    let g = try #require(gens.first)
+    #expect(gens.count == 1)
+    #expect(g.inputTokens == 5653)
+    #expect(g.outputTokens == 203)
+    #expect(g.model == "Claude Opus 5.5 (Medium)")
+    // 완료 시각(f8)을 우선 사용
+    #expect(g.timestamp.timeIntervalSince1970 == 1_793_774_755)
+}
+
+@Test func conversationParserStepTimePrefersFinishedThenStartedThenCreated() throws {
+    let a = buildNewGenMetadata(genID: "only-created", input: 1, output: 1, model: "M")
+    let b = buildNewGenMetadata(genID: "started-no-finish", input: 2, output: 2, model: "M")
+    let path = try makeTempDB(records: [
+        (idx: 0, data: a, size: a.count),
+        (idx: 1, data: b, size: b.count),
+    ])
+    defer { try? FileManager.default.removeItem(atPath: path) }
+    try addStepsTable(path: path, rows: [
+        buildStepMetadata(genID: "only-created", created: 1_700_000_100, started: nil, finished: nil),
+        buildStepMetadata(genID: "started-no-finish", created: 1_700_000_200, started: 1_700_000_300, finished: nil),
+    ])
+
+    let gens = AntigravityConversationParser.generations(dbPath: path)
+    #expect(gens.count == 2)
+    #expect(gens.first { $0.idx == 0 }?.timestamp.timeIntervalSince1970 == 1_700_000_100)
+    #expect(gens.first { $0.idx == 1 }?.timestamp.timeIntervalSince1970 == 1_700_000_300)
+}
+
+@Test func conversationParserSkipsNewFormatRecordsWithoutAnyTimestamp() throws {
+    // steps 테이블이 없거나 생성 ID가 안 맞으면 시각을 알 수 없으니 조용히 스킵한다 (크래시 금지).
+    let blob = buildNewGenMetadata(genID: "gen-x", input: 10, output: 5, model: "M")
+    let noSteps = try makeTempDB(records: [(idx: 0, data: blob, size: blob.count)])
+    defer { try? FileManager.default.removeItem(atPath: noSteps) }
+    #expect(AntigravityConversationParser.generations(dbPath: noSteps).isEmpty)
+
+    let mismatch = try makeTempDB(records: [(idx: 0, data: blob, size: blob.count)])
+    defer { try? FileManager.default.removeItem(atPath: mismatch) }
+    try addStepsTable(path: mismatch, rows: [buildStepMetadata(genID: "other", created: 1_700_000_000, started: nil, finished: nil)])
+    #expect(AntigravityConversationParser.generations(dbPath: mismatch).isEmpty)
+}
+
+@Test func conversationParserPrefersInlineTimestampOverSteps() throws {
+    // 옛 포맷(인라인 시각)은 steps가 있어도 인라인을 쓴다.
+    let blob = buildGenMetadata(input: 100, output: 10, epoch: 1_780_000_000, model: "Gemini 3.5 Flash (High)")
+    let path = try makeTempDB(records: [(idx: 0, data: blob, size: blob.count)])
+    defer { try? FileManager.default.removeItem(atPath: path) }
+    try addStepsTable(path: path, rows: [buildStepMetadata(genID: "x", created: 1_111_111_111, started: nil, finished: nil)])
+    let g = try #require(AntigravityConversationParser.generations(dbPath: path).first)
+    #expect(g.timestamp.timeIntervalSince1970 == 1_780_000_000)
+}
