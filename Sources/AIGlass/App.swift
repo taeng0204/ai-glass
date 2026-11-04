@@ -215,50 +215,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         win.makeKeyAndOrderFront(nil)
     }
 
-    /// 메뉴바 콘텐츠 호스팅 뷰 — 다중 항목 표시. 항목/값 변화는 SwiftUI @Observable로 자동 반영.
-    private var menubarHost: NSView?
-    /// GPU 합성 오버레이 (펄스 바 한정). 켜져 있으면 menubarHost는 없다.
+    /// 메뉴바 콘텐츠 — GPU 합성 오버레이 (MenubarOverlay). 상태 아이템은 자리(length)만 잡고, 내용은 그 위 투명 창이 그린다.
     private var menubarOverlay: MenubarOverlay?
 
-    /// 오버레이 사용 조건: 웨이브가 없거나, 그 스타일의 오버레이 렌더러가 있을 때. 없는 스타일은 기존 SwiftUI 방식.
-    private var usesMenubarOverlay: Bool {
-        !settings.menubarItems.contains(.wave) || WaveRenderers.supported.contains(settings.waveStyle)
-    }
-
-    /// 상태 아이템에 다중 항목 콘텐츠 호스팅 뷰를 1회 설치하고 폭을 콘텐츠에 맞춘다.
-    /// (텍스트 값·항목 집합 변화는 MenubarContentView가 store/settings를 관찰해 자동 갱신.)
+    /// 오버레이를 1회 만들고, 이후 호출은 설정·항목 변경을 즉시 반영한다.
     func updateStatusTitle() {
-        guard let button = statusItem?.button else { return }
-        if usesMenubarOverlay {
-            if let host = menubarHost { host.removeFromSuperview(); menubarHost = nil }
-            if let overlay = menubarOverlay {
-                overlay.refresh()
-            } else if let statusItem {
-                menubarOverlay = MenubarOverlay(store: store, settings: settings, item: statusItem)
-            }
-            return
+        if let overlay = menubarOverlay {
+            overlay.refresh()
+        } else if let statusItem {
+            menubarOverlay = MenubarOverlay(store: store, settings: settings, item: statusItem)
         }
-        if let overlay = menubarOverlay { overlay.stop(); menubarOverlay = nil }
-        if menubarHost == nil {
-            button.title = ""
-            let host = ClickThroughHostingView(
-                rootView: MenubarContentView(store: store, settings: settings))
-            host.translatesAutoresizingMaskIntoConstraints = false
-            button.addSubview(host)
-            NSLayoutConstraint.activate([
-                host.topAnchor.constraint(equalTo: button.topAnchor),
-                host.bottomAnchor.constraint(equalTo: button.bottomAnchor),
-                host.leadingAnchor.constraint(equalTo: button.leadingAnchor),
-                host.trailingAnchor.constraint(equalTo: button.trailingAnchor),
-            ])
-            menubarHost = host
-        }
-        // 콘텐츠 폭 측정 — 별도 NSHostingController는 window 없이도 fittingSize가 정확하다.
-        // (엣지 고정된 표시 host의 fittingSize는 button 폭에 묶여 부정확하므로 측정엔 안 씀.)
-        let sizer = NSHostingController(rootView: MenubarContentView(store: store, settings: settings))
-        sizer.view.layoutSubtreeIfNeeded()
-        let width = sizer.view.fittingSize.width
-        statusItem?.length = width > 1 ? width : NSStatusItem.variableLength
     }
 
     static func formatTokens(_ n: Int) -> String {

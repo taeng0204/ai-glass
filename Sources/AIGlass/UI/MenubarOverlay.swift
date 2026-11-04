@@ -9,7 +9,7 @@ import AIGlassCore
 /// 그린다. 웨이브 애니메이션은 Core Animation으로 한 번 등록해 두면 화면 합성기가 매 프레임 처리하고,
 /// 앱은 1초에 한 번만 텍스트·색·진폭을 갱신한다.
 ///
-/// 배치·폰트·색은 `MenubarContentView`(SwiftUI)와 동일하게 맞춘다.
+/// 항목 배치 규칙: 웨이브가 켜져 있으면 사용률·리셋시간은 웨이브 옆 묶음이 흡수하고, 텍스트 항목끼리는 · 로 구분한다.
 @MainActor
 final class MenubarOverlay {
     private let store: UsageStore
@@ -158,7 +158,7 @@ final class MenubarOverlay {
     /// 설정·항목 변경 직후 즉시 다시 그린다.
     func refresh() { tick() }
 
-    // MARK: - 데이터 (MenubarContentView와 동일 규칙)
+    // MARK: - 데이터
 
     private var enabled: Set<ServiceID> { settings.enabledServices }
 
@@ -253,10 +253,10 @@ final class MenubarOverlay {
                     // 보이는 오른쪽 여백이 왼쪽 패딩(4)과 같아진다.
                     x += 2
                 case .todayTokens:
-                    let text = (idx == 0 ? "✦ " : "") + MenubarContentView.formatTokens(store.todayTokens(now: now))
+                    let text = (idx == 0 ? "✦ " : "") + MenubarFormat.formatTokens(store.todayTokens(now: now))
                     x += put(today, text, font: textFont, color: .labelColor)
                 case .burnRate:
-                    let text = MenubarContentView.formatRate(store.tokensPerMinute(windowMinutes: 5, now: now))
+                    let text = MenubarFormat.formatRate(store.tokensPerMinute(windowMinutes: 5, now: now))
                     x += put(rate, text, font: textFont, color: .labelColor)
                 case .usagePercent:
                     let startX = x

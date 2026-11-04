@@ -14,17 +14,14 @@ protocol WaveRenderer: AnyObject {
 }
 
 enum WaveRenderers {
-    /// 오버레이로 그릴 수 있는 스타일. 목록에 없는 스타일은 App이 기존 SwiftUI 방식으로 폴백한다.
-    static let supported: Set<WaveStyle> = [.pulseBars, .smoothWave, .heartbeat, .waterFill, .orbGlow]
-
     @MainActor
     static func make(_ style: WaveStyle) -> WaveRenderer {
         switch style {
+        case .pulseBars: return PulseBarsRenderer()
         case .smoothWave: return SmoothWaveRenderer()
-        case .heartbeat: return HeartbeatRenderer()
         case .waterFill: return WaterFillRenderer()
         case .orbGlow: return OrbGlowRenderer()
-        default: return PulseBarsRenderer()
+        case .heartbeat: return HeartbeatRenderer()
         }
     }
 }
