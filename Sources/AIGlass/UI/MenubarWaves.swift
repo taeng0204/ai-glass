@@ -15,12 +15,13 @@ protocol WaveRenderer: AnyObject {
 
 enum WaveRenderers {
     /// 오버레이로 그릴 수 있는 스타일. 목록에 없는 스타일은 App이 기존 SwiftUI 방식으로 폴백한다.
-    static let supported: Set<WaveStyle> = [.pulseBars, .smoothWave]
+    static let supported: Set<WaveStyle> = [.pulseBars, .smoothWave, .heartbeat]
 
     @MainActor
     static func make(_ style: WaveStyle) -> WaveRenderer {
         switch style {
         case .smoothWave: return SmoothWaveRenderer()
+        case .heartbeat: return HeartbeatRenderer()
         default: return PulseBarsRenderer()
         }
     }
@@ -185,6 +186,58 @@ final class SmoothWaveRenderer: LinearMaskedWave {
         for i in 0...steps {
             let x = span * CGFloat(i) / CGFloat(steps)
             let y = height / 2 - amp * sin(Double(x / width) * 4 * .pi)   // CA는 y가 위로 증가 → SwiftUI와 부호 반대
+            if i == 0 { path.move(to: CGPoint(x: x, y: y)) } else { path.addLine(to: CGPoint(x: x, y: y)) }
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        shape.path = path
+        CATransaction.commit()
+    }
+}
+
+// MARK: - 하트비트
+
+/// 심전도 라인 — 가우시안 합 파형(HeartbeatWave.ecg)을 주기 경로로 한 번 그려 두고 한 주기(P)만큼 이동하는 무한 애니메이션.
+/// 기존 식: cyc = (frac·1.6 + t/2.4) mod 1 → 주기 길이 P = W/1.6, 이동 주기 2.4초.
+@MainActor
+final class HeartbeatRenderer: LinearMaskedWave {
+    private let shape = CAShapeLayer()
+    private var lastAmp = -1.0
+    private var period: CGFloat { width / 1.6 }
+
+    init() {
+        super.init(width: 36)
+        shape.strokeColor = NSColor.white.cgColor
+        shape.fillColor = nil
+        shape.lineWidth = 1.6
+        shape.lineCap = .round
+        shape.lineJoin = .round
+        let span = width + 2 * period
+        shape.bounds = CGRect(x: 0, y: 0, width: span, height: height)
+        shape.position = CGPoint(x: span / 2, y: height / 2)
+        content.addSublayer(shape)
+        let frac0 = (Date().timeIntervalSinceReferenceDate / 2.4).truncatingRemainder(dividingBy: 1)
+        let anim = CABasicAnimation(keyPath: "transform.translation.x")
+        anim.fromValue = -period * frac0
+        anim.toValue = -period * (frac0 + 1)
+        anim.duration = 2.4
+        anim.repeatCount = .infinity
+        anim.timingFunction = CAMediaTimingFunction(name: .linear)
+        shape.add(anim, forKey: "scroll")
+    }
+
+    override func updateContent(level: Double, percent: Double, now: Date) {
+        let amplitude = 0.15 + 0.85 * level
+        let amp = (height / 2 - 1.0) * (0.5 + 0.5 * amplitude)
+        guard abs(amp - lastAmp) > 0.15 else { return }
+        lastAmp = amp
+        let path = CGMutablePath()
+        let span = width + 2 * period
+        let steps = 180
+        for i in 0...steps {
+            let x = span * CGFloat(i) / CGFloat(steps)
+            let cyc = Double(x / width * 1.6).truncatingRemainder(dividingBy: 1)
+            let y = height / 2 + amp * HeartbeatWave.ecg(cyc)   // CA는 y가 위로 증가 → 스파이크가 위로
             if i == 0 { path.move(to: CGPoint(x: x, y: y)) } else { path.addLine(to: CGPoint(x: x, y: y)) }
         }
         CATransaction.begin()
