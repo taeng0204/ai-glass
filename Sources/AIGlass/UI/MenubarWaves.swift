@@ -15,13 +15,14 @@ protocol WaveRenderer: AnyObject {
 
 enum WaveRenderers {
     /// 오버레이로 그릴 수 있는 스타일. 목록에 없는 스타일은 App이 기존 SwiftUI 방식으로 폴백한다.
-    static let supported: Set<WaveStyle> = [.pulseBars, .smoothWave, .heartbeat]
+    static let supported: Set<WaveStyle> = [.pulseBars, .smoothWave, .heartbeat, .waterFill]
 
     @MainActor
     static func make(_ style: WaveStyle) -> WaveRenderer {
         switch style {
         case .smoothWave: return SmoothWaveRenderer()
         case .heartbeat: return HeartbeatRenderer()
+        case .waterFill: return WaterFillRenderer()
         default: return PulseBarsRenderer()
         }
     }
@@ -243,6 +244,86 @@ final class HeartbeatRenderer: LinearMaskedWave {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         shape.path = path
+        CATransaction.commit()
+    }
+}
+
+// MARK: - 워터필
+
+/// 사용률만큼 차오른 수면이 사인 파면으로 찰랑이는 2겹. 겹마다 속도가 달라 경로를 각자 한 주기(λ=W/1.5)씩 이동시킨다.
+/// 기존 식: y = top + amp·sin((x/W)·3π + t·speed + shift), 뒤 겹(1.4, 0.7amp, 불투명도 0.4) / 앞 겹(2.3, amp, 0.75, shift 1.7).
+@MainActor
+final class WaterFillRenderer: LinearMaskedWave {
+    private struct Layer {
+        let shape = CAShapeLayer()
+        let speed: Double
+        let shift: Double
+        let ampScale: Double
+    }
+    private let layers: [Layer]
+    private var lastKey = ""
+    private let wavelength: CGFloat = 24
+
+    init() {
+        layers = [Layer(speed: 1.4, shift: 0, ampScale: 0.7), Layer(speed: 2.3, shift: 1.7, ampScale: 1.0)]
+        super.init(width: 36)
+        // 둥근 사각형으로 오려내는 클립 안에 두 겹을 넣는다.
+        let clip = CALayer()
+        clip.frame = CGRect(x: 0, y: 0, width: width, height: height)
+        clip.cornerRadius = 4
+        clip.masksToBounds = true
+        content.addSublayer(clip)
+        let span = width + 2 * wavelength
+        let now = Date().timeIntervalSinceReferenceDate
+        for (i, l) in layers.enumerated() {
+            l.shape.fillColor = NSColor.white.cgColor
+            l.shape.opacity = i == 0 ? 0.4 : 0.75
+            l.shape.bounds = CGRect(x: 0, y: 0, width: span, height: height)
+            l.shape.position = CGPoint(x: span / 2, y: height / 2)
+            clip.addSublayer(l.shape)
+            let frac0 = (now * l.speed / (2 * .pi)).truncatingRemainder(dividingBy: 1)
+            let anim = CABasicAnimation(keyPath: "transform.translation.x")
+            anim.fromValue = -wavelength * frac0
+            anim.toValue = -wavelength * (frac0 + 1)
+            anim.duration = 2 * .pi / l.speed
+            anim.repeatCount = .infinity
+            anim.timingFunction = CAMediaTimingFunction(name: .linear)
+            l.shape.add(anim, forKey: "scroll")
+        }
+        // 가장자리 테두리 (그라데이션 밖 — 흰색 12%)
+        let border = CAShapeLayer()
+        border.path = CGPath(roundedRect: CGRect(x: 0, y: 0, width: width, height: height).insetBy(dx: 0.25, dy: 0.25),
+                             cornerWidth: 3.75, cornerHeight: 3.75, transform: nil)
+        border.fillColor = nil
+        border.strokeColor = NSColor.white.withAlphaComponent(0.12).cgColor
+        border.lineWidth = 0.5
+        layer.addSublayer(border)
+    }
+
+    override func updateContent(level: Double, percent: Double, now: Date) {
+        let fill = max(0, min(1, percent / 100))
+        let amp = 0.6 + 2.4 * level
+        let key = String(format: "%.3f/%.1f", fill, amp)
+        guard key != lastKey else { return }
+        lastKey = key
+        let span = width + 2 * wavelength
+        let steps = 120
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for l in layers {
+            let a = amp * l.ampScale
+            let path = CGMutablePath()
+            path.move(to: CGPoint(x: 0, y: 0))
+            for i in 0...steps {
+                let x = span * CGFloat(i) / CGFloat(steps)
+                let phase = Double(x / width) * 3 * .pi + l.shift
+                // 수면 높이 = height·fill (CA는 y가 위로 증가)
+                path.addLine(to: CGPoint(x: x, y: height * fill - a * sin(phase)))
+            }
+            path.addLine(to: CGPoint(x: span, y: 0))
+            path.closeSubpath()
+            l.shape.path = path
+        }
         CATransaction.commit()
     }
 }
