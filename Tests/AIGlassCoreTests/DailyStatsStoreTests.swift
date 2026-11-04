@@ -238,3 +238,37 @@ private func tempDBPath() -> String {
     store.upsert(events: [e], calendar: .utc)
     #expect(store.streakDays(endingOn: now, calendar: .utc) == 0)
 }
+/// 회귀: 8일 창이 밀리며 가장자리 날짜의 이벤트가 일부만 남아도, 이미 저장된 더 큰 합계를 줄이면 안 된다.
+/// (REPLACE였을 때 원본 202M이 45M으로 굳어 오래된 날짜 통계가 유실됐다.)
+@MainActor @Test func upsertNeverShrinksAnAlreadyStoredDay() {
+    let day = ISO8601.date("2026-06-10T12:00:00Z")!
+    let store = try! #require(DailyStatsStore(path: tempDBPath()))
+    func event(_ input: Int) -> TokenEvent {
+        TokenEvent(service: .claude, timestamp: day, model: "m", inputTokens: input, outputTokens: 0,
+                   cacheReadTokens: input, cacheCreationTokens: input, project: "p")
+    }
+    func total() -> Int {
+        store.dailyTotalsByService(days: 7, now: day, calendar: .utc)
+            .filter { $0.service == .claude }.reduce(0) { $0 + $1.tokens }
+    }
+    store.upsert(events: [event(1000)], calendar: .utc)
+    #expect(total() == 3000)
+    // 창이 밀려 그날 이벤트가 일부(300)만 남은 상태의 upsert → 줄어들면 안 된다
+    store.upsert(events: [event(300)], calendar: .utc)
+    #expect(total() == 3000)
+    // 더 큰 값(과거 백필의 전체 합계)은 반영된다 → 이미 줄어든 날짜도 복구 가능
+    store.upsert(events: [event(5000)], calendar: .utc)
+    #expect(total() == 15000)
+}
+
+@MainActor @Test func upsertMergesPerColumnIndependently() {
+    let day = ISO8601.date("2026-06-10T12:00:00Z")!
+    let store = try! #require(DailyStatsStore(path: tempDBPath()))
+    // 입력은 큰 값, 출력은 작은 값으로 한 번 저장한 뒤, 반대로 입력은 작고 출력은 큰 값을 병합
+    store.upsert(events: [TokenEvent(service: .codex, timestamp: day, model: "m", inputTokens: 900, outputTokens: 10,
+                                     cacheReadTokens: 0, cacheCreationTokens: 0, project: "p")], calendar: .utc)
+    store.upsert(events: [TokenEvent(service: .codex, timestamp: day, model: "m", inputTokens: 100, outputTokens: 70,
+                                     cacheReadTokens: 0, cacheCreationTokens: 0, project: "p")], calendar: .utc)
+    let t = store.dailyTotalsByService(days: 7, now: day, calendar: .utc).filter { $0.service == .codex }
+    #expect(t.reduce(0) { $0 + $1.tokens } == 970) // max(900,100) + max(10,70)
+}

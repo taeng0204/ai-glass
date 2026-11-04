@@ -3,10 +3,13 @@ import SQLite3
 
 /// SQLite 기반 일별 토큰 통계 영구 저장소.
 ///
-/// (day, service, model, project) 단위로 집계해 `INSERT OR REPLACE`로 저장한다.
-/// **주의: REPLACE는 누적이 아니라 대체**이므로, 호출자는 해당 일자의 전체 이벤트를
-/// 넘겨야 멱등성이 유지된다 (`UsageStore.events`가 8일 보존이므로 매번 최근 8일 전체를
-/// 넘기는 것이 안전).
+/// (day, service, model, project) 단위로 집계해 **컬럼별 최댓값으로 병합**(upsert)한다.
+///
+/// 왜 REPLACE가 아니라 MAX인가: `UsageStore.events`는 최근 8일만 보관하고 창이 시간에 따라 밀린다.
+/// 가장자리 날짜는 그날 이벤트의 일부만 메모리에 남아 있으므로, 덮어쓰면 점점 줄어든 부분합으로 굳어
+/// 오래된 날짜의 통계가 유실됐다(실측: 원본 202M → 저장 45M). 하루치 합계는 시간이 지나도 줄지 않으므로
+/// 기존 값보다 작은 입력은 무시하고 큰 입력만 반영하면, 부분 입력(창 가장자리)에도 안전하고
+/// 전체 입력(과거 백필)에도 같은 결과로 수렴해 멱등성이 유지된다.
 @MainActor
 public final class DailyStatsStore {
     private var db: OpaquePointer?
@@ -72,7 +75,7 @@ public final class DailyStatsStore {
         var input = 0, output = 0, cacheRead = 0, cacheCreate = 0
     }
 
-    /// 이벤트를 (day, service, model, project)로 집계해 `INSERT OR REPLACE`한다.
+    /// 이벤트를 (day, service, model, project)로 집계해 기존 값과 컬럼별 최댓값으로 병합한다.
     /// project가 nil이면 빈 문자열로 저장한다.
     public func upsert(events: [TokenEvent], calendar: Calendar = .current) {
         guard !events.isEmpty else { return }
@@ -103,9 +106,14 @@ public final class DailyStatsStore {
         }
 
         let sql = """
-        INSERT OR REPLACE INTO daily_stats
+        INSERT INTO daily_stats
         (day, service, model, project, input, output, cache_read, cache_create)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(day, service, model, project) DO UPDATE SET
+            input = MAX(input, excluded.input),
+            output = MAX(output, excluded.output),
+            cache_read = MAX(cache_read, excluded.cache_read),
+            cache_create = MAX(cache_create, excluded.cache_create)
         """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
