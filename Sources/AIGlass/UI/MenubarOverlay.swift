@@ -269,7 +269,9 @@ final class MenubarOverlay {
                     gradient.isHidden = false
                     x += waveW + 8
                     x += layoutInfo(at: x, current: current, curPercent: curPercent, maxPercent: maxPercent, now: now)
-                    x += 4
+                    // 끝 패딩 — 라벨 자체가 오른쪽에 ~2pt 안쪽 여백을 갖고 있어서(NSTextField 셀 inset) 2만 더하면
+                    // 보이는 오른쪽 여백이 왼쪽 패딩(4)과 같아진다.
+                    x += 2
                 case .todayTokens:
                     let text = (idx == 0 ? "✦ " : "") + MenubarContentView.formatTokens(store.todayTokens(now: now))
                     x += put(today, text, font: textFont, color: .labelColor)
