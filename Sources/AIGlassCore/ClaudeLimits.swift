@@ -25,18 +25,23 @@ public struct ClaudeCredentials {
     }
 
     /// macOS Keychain에서 Claude Code OAuth 자격증명 읽기.
-    public static func fromKeychain(allowSecurityToolFallback: Bool = false) -> ClaudeCredentials? {
-        if let data = readKeychainDataWithoutPrompt() {
+    ///
+    /// 기본은 `/usr/bin/security`로 읽는다. 이 항목은 Claude Code가 `security`로 만들어서 그 도구가 항상 신뢰 목록에 있어
+    /// 암호 대화상자가 뜨지 않는다. 앱이 `SecItemCopyMatching`으로 직접 읽으면 앱 서명이 바뀌거나 Claude Code가 토큰을
+    /// 갱신해 항목 ACL이 초기화될 때마다 "AI Glass wants to access key…" 암호창이 떠서 메인 스레드를 막는다.
+    /// - Parameter allowDirectKeychain: `security` 도구로 못 읽었을 때 SecItem 직접 읽기로 폴백(대화상자가 뜰 수 있음). 기본 false.
+    public static func fromKeychain(allowDirectKeychain: Bool = false) -> ClaudeCredentials? {
+        if let data = readKeychainDataWithSecurityTool() {
             return parse(data)
         }
-        guard allowSecurityToolFallback else { return nil }
-        if let data = readKeychainDataWithSecurityTool() {
+        guard allowDirectKeychain else { return nil }
+        if let data = readKeychainDataWithoutPrompt() {
             return parse(data)
         }
         return nil
     }
 
-    /// 앱 번들 재서명 후 Keychain ACL이 UI 승인을 요구하면 즉시 실패시켜 폴링이 멈추지 않게 한다.
+    /// 직접 읽기(폴백 전용). ACL이 UI 승인을 요구하면 즉시 실패시키려 하지만, 레거시 키체인에서는 대화상자가 뜰 수 있다.
     private static func readKeychainDataWithoutPrompt() -> Data? {
         let context = LAContext()
         context.interactionNotAllowed = true
@@ -56,7 +61,7 @@ public struct ClaudeCredentials {
         return data
     }
 
-    /// ad-hoc 서명 앱이 직접 접근 권한을 잃은 경우, macOS `security` 도구로 동일 항목을 읽어 폴백한다.
+    /// macOS `security` 도구로 항목을 읽는다 (암호창 없이 읽히는 기본 경로). 2초 안에 못 읽으면 포기한다.
     private static func readKeychainDataWithSecurityTool() -> Data? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/security")

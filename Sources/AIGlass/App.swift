@@ -8,7 +8,7 @@ import Carbon.HIToolbox
 enum AIGlassMain {
     static func main() {
         if CommandLine.arguments.contains("--check-claude") {
-            guard let creds = ClaudeCredentials.fromKeychain(allowSecurityToolFallback: true) else {
+            guard let creds = ClaudeCredentials.fromKeychain(allowDirectKeychain: true) else {
                 print("Keychain에서 Claude Code 자격증명을 찾지 못했습니다.")
                 exit(0)
             }
