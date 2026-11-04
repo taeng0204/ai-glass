@@ -285,6 +285,32 @@ private func writeConvDB(dir: URL, convId: String,
     #expect(store.events.filter { $0.service == .gemini }.count == 2)
 }
 
+/// 회귀: agy /usage 실제 쿼터를 쓰는 동안(publishesDailyEstimate=false)에도 대화 토큰은 계속 적재돼야 한다.
+/// (한도 게시 guard가 토큰 수집보다 앞에 있어 Antigravity가 추이·프로젝트에 안 잡히던 버그)
+@MainActor @Test func geminiCollectorIngestsTokensEvenWhenDailyEstimateIsOff() throws {
+    let dir = try makeTempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let now = Date()
+    let epoch = Int(now.timeIntervalSince1970) - 60
+    let convDir = dir.appendingPathComponent("conversations")
+    try FileManager.default.createDirectory(at: convDir, withIntermediateDirectories: true)
+    try writeConvDB(dir: convDir, convId: "conv-C", records: [
+        (idx: 0, blob: agyGenBlob(input: 500, output: 40, epoch: epoch, model: "Gemini 3.5 Flash (High)")),
+    ])
+
+    let store = UsageStore()
+    let collector = GeminiCollector(root: dir, dailyQuota: 100,
+                                    historyFile: dir.appendingPathComponent("none.jsonl"),
+                                    logDir: dir.appendingPathComponent("missing-log"),
+                                    conversationsDir: convDir)
+    collector.publishesDailyEstimate = false
+    collector.collect(into: store, now: now)
+
+    #expect(store.events.filter { $0.service == .gemini }.count == 1)
+    // 일일 추정 한도는 게시하지 않는다 (실제 쿼터가 있을 때)
+    #expect(store.limits[.gemini] == nil)
+}
+
 @MainActor @Test func geminiCollectorIncrementallyIngestsNewRecords() throws {
     let dir = try makeTempDir()
     defer { try? FileManager.default.removeItem(at: dir) }

@@ -195,13 +195,16 @@ public final class GeminiCollector {
             lastRequestSignature = signature
         }
         store.setGeminiRequests(allDates)
+
+        // Antigravity 대화 DB에서 토큰 이벤트 적재 (추정치, 비공개 포맷) — 추이·프로젝트 통계의 원천.
+        // 한도 게시 여부와 무관하게 항상 실행한다. (실제 쿼터를 쓰는 동안 이 단계가 통째로 건너뛰어져
+        // Antigravity가 추이·프로젝트에 안 잡히던 버그가 있었다.)
+        collectConversationTokens(into: store)
+
         // agy /usage의 실제 쿼터를 받아오는 중이면 요청 수 기반 일일 추정치는 덮어쓰지 않는다.
         guard publishesDailyEstimate else { return }
         let window = GeminiLogParser.dailyWindow(requestDates: allDates, quota: dailyQuota, now: now)
         store.setLimits([window], for: .gemini)
-
-        // Antigravity 대화 DB에서 토큰 이벤트 적재 (추정치, 비공개 포맷).
-        collectConversationTokens(into: store)
     }
 
     /// 최근 8일 mtime의 `<convId>.db`를 READONLY로 읽어 새 generation을 TokenEvent로 적재한다.
