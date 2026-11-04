@@ -3,7 +3,7 @@ import Foundation
 /// 과거 로그를 통계 DB에 채우기 위한 읽기 경로.
 ///
 /// 라이브 수집기는 최근 8일만 읽고(`UsageStore.retentionDays`), 앱을 새로 설치하면 통계 DB도 그 8일치부터 시작한다.
-/// 그래서 30일 추이·잔디에는 최근 것밖에 안 보였다. 이 백필은 더 긴 기간(기본 35일)의 로그를 한 번 읽어
+/// 그래서 30일 추이·잔디에는 최근 것밖에 안 보였다. 이 백필은 더 긴 기간(기본 110일)의 로그를 한 번 읽어
 /// `DailyStatsStore`(최댓값 병합)에만 채운다 — 라이브 화면의 8일 보관 정책은 건드리지 않는다.
 ///
 /// - 메인 스레드를 막지 않도록 **상태 없는 정적 함수**로 만들었고(수집기는 @MainActor), 백그라운드에서 호출한다.
@@ -38,9 +38,11 @@ public struct HistoryBackfillSources: Sendable {
 
 public enum HistoryBackfill {
     /// 백필 로직 버전 — 올리면 이미 한 번 돌린 사용자도 다시 돌린다 (파서 수정으로 과거 데이터가 달라질 때).
-    public static let version = 1
-    /// 읽을 과거 일수. 30일 추이를 완전한 날짜로 채우려고 여유를 둔다.
-    public static let lookbackDays = 35
+    /// (v2: 읽는 기간을 35일 → 110일로 늘림 — 잔디 15주(≈105일)를 채우려고.)
+    public static let version = 2
+    /// 읽을 과거 일수. 가장 긴 화면이 잔디(15주 = 최대 약 104일)라서 그만큼 + 여유.
+    /// 30일 추이(30일)와 7일 화면은 그 안에 포함된다.
+    public static let lookbackDays = 110
 
     /// 최근 `lookbackDays`일의 토큰 이벤트를 전부 읽어 반환한다 (UTC 날짜 경계 기준으로 완전한 날만).
     /// 서비스·소스별 dedup 규칙은 라이브 수집기와 같다.

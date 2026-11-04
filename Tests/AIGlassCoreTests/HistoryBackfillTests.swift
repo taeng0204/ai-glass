@@ -48,11 +48,11 @@ private let day: TimeInterval = 24 * 3600
 @Test func backfillReadsOldLinesWithinLookbackButNotBeyond() throws {
     let root = try tmpDir(); defer { try? FileManager.default.removeItem(at: root) }
     let now = Date()
-    // 20일 전(창 안) / 3일 전(창 안) / 60일 전(창 밖) 줄이 한 파일에 섞여 있다 (파일 mtime은 최근).
+    // 20일 전(창 안) / 3일 전(창 안) / lookback+30일 전(창 밖) 줄이 한 파일에 섞여 있다 (파일 mtime은 최근).
     try write([
         claudeLine(id: "old20", at: now.addingTimeInterval(-20 * day)),
         claudeLine(id: "new3", at: now.addingTimeInterval(-3 * day)),
-        claudeLine(id: "ancient", at: now.addingTimeInterval(-60 * day)),
+        claudeLine(id: "ancient", at: now.addingTimeInterval(-Double(HistoryBackfill.lookbackDays + 30) * day)),
         #"{"type":"user","message":{"content":"usage 단어가 들어 있지만 토큰 줄이 아님"}}"#,
     ], to: sources(root).claudeRoot.appendingPathComponent("p/a.jsonl"))
 
@@ -67,10 +67,10 @@ private let day: TimeInterval = 24 * 3600
 @Test func backfillSkipsFilesNotModifiedWithinLookback() throws {
     let root = try tmpDir(); defer { try? FileManager.default.removeItem(at: root) }
     let now = Date()
-    // 내용의 시각은 최근이지만 파일 mtime이 60일 전 → 읽지 않는다 (비싼 순회 방지)
+    // 내용의 시각은 최근이지만 파일 mtime이 lookback보다 한참 전 → 읽지 않는다 (비싼 순회 방지)
     try write([claudeLine(id: "x", at: now.addingTimeInterval(-1 * day))],
               to: sources(root).claudeRoot.appendingPathComponent("p/stale.jsonl"),
-              mtime: now.addingTimeInterval(-60 * day))
+              mtime: now.addingTimeInterval(-Double(HistoryBackfill.lookbackDays + 30) * day))
     #expect(HistoryBackfill.collectEvents(sources: sources(root), now: now).isEmpty)
 }
 
@@ -85,14 +85,14 @@ private let day: TimeInterval = 24 * 3600
 
 @Test func backfillCutsOffAtUTCMidnightOfOldestDay() throws {
     let root = try tmpDir(); defer { try? FileManager.default.removeItem(at: root) }
-    // now를 UTC 정오로 고정: 35일 전 정오 줄은 그날 UTC 자정 이후라 포함, 36일 전 줄은 제외
+    // now를 UTC 정오로 고정, 기간은 35일로 명시: 35일 전 정오 줄은 그날 UTC 자정 이후라 포함, 36일 전 줄은 제외
     var utc = Calendar(identifier: .gregorian); utc.timeZone = TimeZone(identifier: "UTC")!
     let now = utc.date(from: DateComponents(year: 2026, month: 11, day: 4, hour: 12))!
     try write([
         claudeLine(id: "d35", at: now.addingTimeInterval(-35 * day)),
         claudeLine(id: "d36", at: now.addingTimeInterval(-36 * day)),
     ], to: sources(root).claudeRoot.appendingPathComponent("p/a.jsonl"), mtime: now)
-    let events = HistoryBackfill.collectEvents(sources: sources(root), now: now)
+    let events = HistoryBackfill.collectEvents(sources: sources(root), now: now, lookbackDays: 35)
     #expect(events.count == 1)
 }
 
