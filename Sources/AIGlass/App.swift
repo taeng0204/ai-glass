@@ -105,6 +105,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         item.button?.action = #selector(statusItemClicked)
         item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         statusItem = item
+        // 첫 갱신(로그 읽기)이 메인 스레드를 오래 잡아도 메뉴바 알약이 바로 보이도록 먼저 만든다.
+        // 웨이브 애니메이션은 GPU가 재생하고, 텍스트는 갱신이 끝나는 대로 채워진다.
+        updateStatusTitle()
 
         dashboardPanel = DashboardPanelController(
             store: store,
