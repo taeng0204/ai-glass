@@ -91,6 +91,7 @@ final class AppSettings {
         static let warnThreshold = "aiglass.warnThreshold"
         static let critThreshold = "aiglass.critThreshold"
         static let hudVisible = "aiglass.hudVisible"
+        static let dashboardOffset = "aiglass.dashboardOffset"
         static let notificationsEnabled = "aiglass.notificationsEnabled"
         static let geminiDailyQuota = "aiglass.geminiDailyQuota"
         static let launchAtLogin = "aiglass.launchAtLogin"
@@ -127,6 +128,14 @@ final class AppSettings {
     }
     var hudVisible: Bool {
         didSet { defaults.set(hudVisible, forKey: Key.hudVisible) }
+    }
+    /// 사용자가 드래그해 옮긴 대시보드 팝업 위치 — 메인 화면 visibleFrame의 우상단 모서리 기준 오프셋(`PopupPlacement`).
+    /// nil이면 기본 위치(상태 아이템 바로 아래)에 연다.
+    var dashboardOffset: CGPoint? {
+        didSet {
+            if let o = dashboardOffset { defaults.set([Double(o.x), Double(o.y)], forKey: Key.dashboardOffset) }
+            else { defaults.removeObject(forKey: Key.dashboardOffset) }
+        }
     }
     /// 시스템 알림센터(macOS 배너)로도 보낼지. 기본 off — HUD가 주 알림 채널.
     var notificationsEnabled: Bool {
@@ -248,6 +257,11 @@ final class AppSettings {
         warnThreshold = defaults.object(forKey: Key.warnThreshold) as? Double ?? 70
         critThreshold = defaults.object(forKey: Key.critThreshold) as? Double ?? 90
         hudVisible = defaults.object(forKey: Key.hudVisible) as? Bool ?? true
+        if let raw = defaults.array(forKey: Key.dashboardOffset) as? [Double], raw.count == 2 {
+            dashboardOffset = CGPoint(x: raw[0], y: raw[1])
+        } else {
+            dashboardOffset = nil
+        }
         notificationsEnabled = defaults.object(forKey: Key.notificationsEnabled) as? Bool ?? false
         notifyLimitThreshold = defaults.object(forKey: Key.notifyLimitThreshold) as? Bool ?? true
         notifyDepletion = defaults.object(forKey: Key.notifyDepletion) as? Bool ?? true

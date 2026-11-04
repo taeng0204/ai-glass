@@ -26,6 +26,8 @@ struct DashboardView: View {
     var onResize: () -> Void = {}
     /// 패널이 열릴 때마다 count 증가 — `.id`로 콘텐츠 재생성해 첫 진입 애니메이션 재생.
     var openToken: OpenToken? = nil
+    /// 헤더 핸들로 팝업을 옮기고 놓았을 때 (위치 저장·화면 안 보정용).
+    var onDragEnd: () -> Void = {}
     @State private var tab: Tab = .overview
     /// 탭 진입 누적 횟수 — 재진입마다 탭 콘텐츠 identity를 갈아서(`.id`)
     /// 첫 오픈과 동일한 grow+stagger+카운트업 애니메이션을 재생한다.
@@ -111,6 +113,8 @@ struct DashboardView: View {
         .id(openToken?.count ?? 0)
         .padding(14)
         .frame(width: 320)
+        // 위쪽 14pt 여백이 드래그 핸들 — 세그먼트·버튼 위가 아니라서 클릭과 겹치지 않는다.
+        .overlay(alignment: .top) { PopupDragHandle(onDragEnd: onDragEnd).frame(height: 14) }
         .onChange(of: tab) { onResize() }
     }
 }

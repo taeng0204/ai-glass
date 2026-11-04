@@ -13,6 +13,8 @@ struct SettingsView: View {
     var onReplayOnboarding: () -> Void = {}
     /// 커스텀 메시지 미리보기 — 샘플 HUD 카드를 잠깐 띄운다.
     var onPreviewEvent: (HUDEvent) -> Void = { _ in }
+    /// "팝업 위치 초기화" 버튼 — 옮겨 둔 대시보드 팝업을 기본 위치로 되돌린다.
+    var onResetPopupPosition: () -> Void = {}
 
     var body: some View {
         TabView {
@@ -94,6 +96,19 @@ struct SettingsView: View {
 
     private var hudTab: some View {
         Form {
+            Section("대시보드 팝업") {
+                HStack {
+                    Text(settings.dashboardOffset == nil ? "위치: 메뉴바 아이콘 아래 (기본)" : "위치: 직접 옮긴 자리")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("위치 초기화", action: onResetPopupPosition)
+                        .disabled(settings.dashboardOffset == nil)
+                }
+                Text("팝업 맨 위의 작은 막대(핸들)를 잡고 끌면 옮길 수 있고, 다음에도 그 자리에 열립니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("HUD") {
                 Toggle("HUD 표시", isOn: $settings.hudVisible)
                     .onChange(of: settings.hudVisible) { _, newValue in

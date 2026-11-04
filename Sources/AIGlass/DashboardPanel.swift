@@ -14,6 +14,7 @@ final class DashboardPanelController {
     let panel: NSPanel
     private let store: UsageStore
     private let statsStore: DailyStatsStore?
+    private let settings: AppSettings
     private let onRefresh: () -> Void
     private let onClose: () -> Void
 
@@ -22,6 +23,10 @@ final class DashboardPanelController {
     /// HUD/메뉴바 버튼처럼 클릭 자체가 토글 액션으로 이어지는 영역.
     /// 바깥 클릭 모니터가 mouseDown에서 먼저 닫아버리면 mouseUp 액션이 다시 열어 토글이 깨진다.
     var toggleSourceFrames: () -> [NSRect] = { [] }
+    /// 메인 화면 메뉴바에서 상태 아이템(오버레이)이 놓인 프레임. 저장된 위치가 없을 때 이 아래에 연다.
+    /// 상태 아이템 창은 모니터마다 복제본이 있어 `button.window`가 다른 모니터 쪽을 가리킬 수 있으므로,
+    /// 오버레이가 메인 화면에서 확인한 위치를 우선 쓴다.
+    var anchorFrame: () -> NSRect? = { nil }
     /// 패널이 열릴 때마다 +1 → DashboardView가 `.id`로 콘텐츠 재생성(첫 진입 애니메이션 재생).
     private let openToken = OpenToken()
 
@@ -36,6 +41,7 @@ final class DashboardPanelController {
          onReplay: @escaping (HUDEvent) -> Void) {
         self.store = store
         self.statsStore = statsStore
+        self.settings = settings
         self.onRefresh = onRefresh
         self.onClose = onClose
 
@@ -57,7 +63,8 @@ final class DashboardPanelController {
                                  onSettings: onSettings,
                                  onReplay: onReplay,
                                  onResize: { [weak self] in self?.resizeToFit() },
-                                 openToken: openToken)
+                                 openToken: openToken,
+                                 onDragEnd: { [weak self] in self?.dragEnded() })
             .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22))
             .padding(8)
             .fixedSize()
@@ -82,6 +89,10 @@ final class DashboardPanelController {
         // 상단 고정: 높이 변화만큼 origin.y 보정.
         frame.origin.y = frame.maxY - fitting.height
         frame.size = fitting
+        // 위로 옮겨 둔 팝업이 탭 전환으로 커지면 아래가 화면 밖으로 나갈 수 있어 안으로 보정한다.
+        let clamped = PopupPlacement.clamp(topLeft: NSPoint(x: frame.minX, y: frame.maxY), size: fitting,
+                                           visible: Self.mainVisibleFrame())
+        frame.origin = NSPoint(x: clamped.x, y: clamped.y - fitting.height)
         panel.setFrame(frame, display: true, animate: true)
     }
 
@@ -114,25 +125,62 @@ final class DashboardPanelController {
         let fitting = panel.contentView?.fittingSize ?? NSSize(width: 360, height: 360)
         panel.setContentSize(fitting)
 
-        guard let buttonWindow = button.window else { return }
-        let buttonRectInWindow = button.convert(button.bounds, to: nil)
-        let buttonRectOnScreen = buttonWindow.convertToScreen(buttonRectInWindow)
-
+        // 항상 메인 화면(메뉴바 아이콘이 있는 화면)에 연다 — ⌘⇧U 단축키로 열어도 마찬가지.
         let size = panel.frame.size
-        // 우측 정렬: 패널 우측 끝을 버튼 우측 끝에 맞춤.
-        var x = buttonRectOnScreen.maxX - size.width
-        let top = buttonRectOnScreen.minY - 2
-
-        // 화면 밖이면 클램프.
-        let screen = buttonWindow.screen ?? NSScreen.main
-        if let visible = screen?.visibleFrame {
-            x = min(max(x, visible.minX + 4), visible.maxX - size.width - 4)
+        let visible = Self.mainVisibleFrame()
+        let topLeft: NSPoint
+        if let offset = settings.dashboardOffset {
+            // 사용자가 옮겨 둔 위치 (우상단 기준 오프셋 → 현재 해상도의 좌표, 화면 안으로 보정)
+            topLeft = PopupPlacement.topLeft(offset: offset, size: size, visible: visible)
+        } else {
+            // 기본: 상태 아이템 바로 아래, 오른쪽 끝 정렬
+            topLeft = PopupPlacement.defaultTopLeft(anchor: anchorFrame() ?? Self.mainScreenFrame(of: button),
+                                                    size: size, visible: visible)
         }
-
-        panel.setFrameTopLeftPoint(NSPoint(x: x, y: top))
+        panel.setFrameTopLeftPoint(topLeft)
         panel.orderFrontRegardless()
 
         installMonitors()
+    }
+
+    /// 메인 화면(원점이 (0,0)인 화면 — 메뉴바가 있는 화면)의 visibleFrame.
+    static func mainVisibleFrame() -> NSRect {
+        (NSScreen.screens.first { $0.frame.origin == .zero } ?? NSScreen.main ?? NSScreen.screens[0]).visibleFrame
+    }
+
+    /// `anchorFrame`을 모를 때의 폴백: 버튼 창이 메인 화면 메뉴바 띠 안에 있을 때만 그 프레임을 쓴다.
+    /// (다른 모니터 복제본의 프레임이면 엉뚱한 화면 기준이 되므로 버린다.)
+    private static func mainScreenFrame(of button: NSStatusBarButton) -> NSRect? {
+        guard let f = button.window?.frame,
+              let main = NSScreen.screens.first(where: { $0.frame.origin == .zero }),
+              main.frame.maxY - main.visibleFrame.maxY > 8,
+              f.midX > main.frame.minX, f.midX < main.frame.maxX,
+              f.midY > main.visibleFrame.maxY, f.midY < main.frame.maxY else { return nil }
+        return f
+    }
+
+    /// 헤더 핸들로 옮기고 놓았을 때: 화면 안으로 보정한 뒤 그 위치를 저장한다.
+    private func dragEnded() {
+        let visible = Self.mainVisibleFrame()
+        let size = panel.frame.size
+        let clamped = PopupPlacement.clamp(topLeft: NSPoint(x: panel.frame.minX, y: panel.frame.maxY),
+                                           size: size, visible: visible)
+        var frame = panel.frame
+        frame.origin = NSPoint(x: clamped.x, y: clamped.y - size.height)
+        if frame != panel.frame { panel.setFrame(frame, display: true, animate: true) }
+        settings.dashboardOffset = PopupPlacement.offset(frame: frame, visible: visible)
+    }
+
+    /// 저장된 위치를 지우고 기본 위치(상태 아이템 아래)로 되돌린다. 열려 있으면 바로 옮긴다.
+    func resetPosition(relativeTo button: NSStatusBarButton?) {
+        settings.dashboardOffset = nil
+        guard isShown else { return }
+        let size = panel.frame.size
+        let topLeft = PopupPlacement.defaultTopLeft(
+            anchor: anchorFrame() ?? button.flatMap(Self.mainScreenFrame(of:)),
+            size: size, visible: Self.mainVisibleFrame())
+        panel.setFrame(NSRect(x: topLeft.x, y: topLeft.y - size.height, width: size.width, height: size.height),
+                       display: true, animate: true)
     }
 
     func close() {

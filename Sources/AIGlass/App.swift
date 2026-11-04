@@ -124,6 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.togglePopover()
         }
         hudController?.setVisible(settings.hudVisible)
+        dashboardPanel?.anchorFrame = { [weak self] in self?.menubarOverlay?.anchorFrame }
         dashboardPanel?.toggleSourceFrames = { [weak self] in
             guard let self else { return [] }
             var frames: [NSRect] = []
@@ -727,6 +728,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         hudItem.state = settings.hudVisible ? .on : .off
         menu.addItem(hudItem)
 
+        // 팝업을 옮겨 둔 경우에만 활성 — 기본 위치(메뉴바 아이콘 아래)로 되돌린다.
+        let resetItem = NSMenuItem(title: "팝업 위치 초기화", action: #selector(resetDashboardPosition), keyEquivalent: "")
+        resetItem.target = self
+        resetItem.isEnabled = settings.dashboardOffset != nil
+        menu.addItem(resetItem)
+
         menu.addItem(.separator())
 
         let quitItem = NSMenuItem(title: "AI Glass 종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -736,6 +743,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         statusItem?.menu = menu          // 일시 부착
         statusItem?.button?.performClick(nil)
         statusItem?.menu = nil           // 분리해야 좌클릭 팝오버가 계속 동작
+    }
+
+    @objc func resetDashboardPosition() {
+        dashboardPanel?.resetPosition(relativeTo: statusItem?.button)
     }
 
     @objc func toggleHUD() {
@@ -755,7 +766,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let view = SettingsView(settings: settings, hudController: hudController,
                                 onMenubarModeChange: { [weak self] in self?.updateStatusTitle() },
                                 onReplayOnboarding: { [weak self] in self?.openOnboarding() },
-                                onPreviewEvent: { [weak self] event in self?.flashHUD(event, duration: 4) })
+                                onPreviewEvent: { [weak self] event in self?.flashHUD(event, duration: 4) },
+                                onResetPopupPosition: { [weak self] in self?.resetDashboardPosition() })
         let hosting = NSHostingController(rootView: view)
         let win = NSWindow(contentViewController: hosting)
         win.title = "AI Glass 설정"

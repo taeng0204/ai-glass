@@ -413,6 +413,13 @@ final class MenubarOverlay {
     private var primaryFrame: NSRect?
     private var primarySeenAt = Date.distantPast
 
+    /// 메인 화면 메뉴바에서 최근(8초 이내)에 확인된 상태 아이템 창 프레임. 대시보드 팝업의 기본 위치 기준.
+    /// 아이템이 숨겨졌거나 위치를 모르면 nil.
+    var anchorFrame: NSRect? {
+        guard let f = primaryFrame, Date().timeIntervalSince(primarySeenAt) < 8 else { return nil }
+        return f
+    }
+
     /// 상태 아이템 위치에 투명 패널을 맞춘다.
     ///
     /// 모니터가 여러 대면 macOS가 화면마다 상태 아이템 복제본을 두고, `button.window`가 그 사이를 번갈아 보고한다
