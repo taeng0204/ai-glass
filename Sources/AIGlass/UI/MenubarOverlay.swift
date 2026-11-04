@@ -249,9 +249,8 @@ final class MenubarOverlay {
                     r.layer.isHidden = false
                     x += r.width + 8
                     x += layoutInfo(at: x, current: current, curPercent: curPercent, maxPercent: maxPercent, now: now)
-                    // 끝 패딩 — 라벨 자체가 오른쪽에 ~2pt 안쪽 여백을 갖고 있어서(NSTextField 셀 inset) 2만 더하면
-                    // 보이는 오른쪽 여백이 왼쪽 패딩(4)과 같아진다.
-                    x += 2
+                    // 끝 패딩 없음 — 라벨 자체가 오른쪽에 ~2pt 안쪽 여백을 갖고 있어서(NSTextField 셀 inset)
+                    // 보이는 오른쪽 여백은 그 2pt뿐이다 (왼쪽 패딩은 4). 더 줄이면 글자가 알약 끝에 붙는다.
                 case .todayTokens:
                     let text = (idx == 0 ? "✦ " : "") + MenubarFormat.formatTokens(store.todayTokens(now: now))
                     x += put(today, text, font: textFont, color: .labelColor)
