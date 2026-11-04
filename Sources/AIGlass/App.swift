@@ -45,7 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let hudState = HUDState()
     let eventEngine = EventEngine()
     /// 알림 기록 (대시보드 기록 탭). append 배선은 Y3에서.
-    let eventLog = EventLog()
+    lazy var eventLog = EventLog(store: statsStore)
     var hudController: HUDPanelController?
     var watcher: DirectoryWatcher?
     var hotKey: GlobalHotKey?
@@ -492,7 +492,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// 과거 로그 백필 — 라이브 수집기는 최근 8일만 읽어서, 앱을 새로 설치하면 30일 추이·잔디가 최근 것밖에 없다.
     /// 시작 20초 뒤(첫 갱신과 겹치지 않게) 백그라운드에서 35일치를 읽어 통계 DB에만 채운다. 성공하면 버전을 기록해
     /// 다시 돌지 않는다 (도중에 종료하면 기록이 없어 다음 실행에서 이어서 한다). 병합이 최댓값이라 몇 번 돌아도 안전하다.
+    /// 일별 합계에서 과거 마일스톤·신기록을 기록 탭에 복원 (멱등).
+    private func restoreEventHistory() {
+        eventLog.restoreFromHistory(today: Self.utcDayString(Date()), format: Self.formatTokens)
+    }
+
     private func runHistoryBackfillIfNeeded() {
+        restoreEventHistory()
         let versionKey = "aiglass.historyBackfillVersion"
         guard UserDefaults.standard.integer(forKey: versionKey) < HistoryBackfill.version, statsStore != nil else { return }
         let sources = HistoryBackfillSources.standard()
@@ -503,6 +509,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }.value
             guard let self, let statsStore = self.statsStore else { return }
             statsStore.upsert(events: events, calendar: .utc)
+            self.restoreEventHistory()
             UserDefaults.standard.set(HistoryBackfill.version, forKey: versionKey)
         }
     }

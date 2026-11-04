@@ -107,7 +107,7 @@ Cost figures are **API-price estimates**, not what your subscription actually co
 
 ```bash
 git clone https://github.com/taeng0204/ai-glass.git && cd ai-glass
-swift test                 # unit tests (240)
+swift test                 # unit tests (244)
 swift run AIGlass          # dev run (autostart and notifications need the .app bundle)
 bash Scripts/make-app.sh   # build the .app bundle → build/AIGlass.app
 swift run AIGlass --check-claude   # diagnose the Claude limits API connection

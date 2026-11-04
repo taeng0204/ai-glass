@@ -13,6 +13,7 @@ import SQLite3
 @MainActor
 public final class DailyStatsStore {
     private var db: OpaquePointer?
+    var rawDB: OpaquePointer? { db }
 
     // SQLite가 바인딩 문자열을 자체 복사하도록 강제하는 transient destructor.
     private static let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
