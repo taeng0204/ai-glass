@@ -64,8 +64,18 @@ else
     echo "경고: Assets/AppIcon.icns 없음 — 아이콘 없이 진행" >&2
 fi
 
-echo "==> ad-hoc 코드사인"
-codesign --force --deep -s - "${APP_DIR}"
+# 서명 신원: 로컬 자체 인증서 "AIGlass Local"이 키체인에 있으면 그걸로 서명한다.
+# ad-hoc 서명은 빌드마다 앱 지문이 바뀌어 Keychain(Claude 인증정보) 접근 허용이 매번 초기화되지만,
+# 고정 인증서로 서명하면 designated requirement가 유지되어 "항상 허용"이 재빌드 후에도 남는다.
+# (인증서가 없으면 ad-hoc으로 대체. 만들기: scripts/setup-signing.sh)
+SIGN_ID="${AIGLASS_SIGN_ID:-AIGlass Local}"
+if security find-identity -p codesigning 2>/dev/null | grep -q "\"${SIGN_ID}\""; then
+    echo "==> 코드사인 (${SIGN_ID})"
+    codesign --force --deep -s "${SIGN_ID}" "${APP_DIR}"
+else
+    echo "==> ad-hoc 코드사인 (인증서 '${SIGN_ID}' 없음 — Keychain 허용이 재빌드마다 초기화됨)"
+    codesign --force --deep -s - "${APP_DIR}"
+fi
 
 echo ""
 echo "완료: ${APP_DIR}"
