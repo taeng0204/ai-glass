@@ -1,0 +1,28 @@
+name: CI
+
+# Run the test suite and a full app build on every push to main and on pull requests,
+# so a broken build is caught before a release tag is pushed (release.yml only runs on tags).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-build:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run tests
+        run: swift test
+
+      - name: Build .app bundle
+        run: bash Scripts/make-app.sh
