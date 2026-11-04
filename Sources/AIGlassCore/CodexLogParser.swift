@@ -27,6 +27,13 @@ public enum CodexLogParser {
         return last.isEmpty ? nil : last
     }
 
+    /// 창 길이(분) → 한도 종류. 6시간 이하는 5시간 창, 그 이상(≈7일)은 주간 창.
+    /// window_minutes가 없는 구버전 로그는 위치 기반 기본값을 쓴다.
+    static func kind(forWindowMinutes minutes: Int?, fallback: LimitWindow.Kind) -> LimitWindow.Kind {
+        guard let minutes else { return fallback }
+        return minutes <= 360 ? .session5h : .weekly
+    }
+
     public static func parse(line: String) -> CodexParsed? {
         guard !line.isEmpty,
               let data = line.data(using: .utf8),
@@ -39,9 +46,12 @@ public enum CodexLogParser {
 
         var limits: [LimitWindow] = []
         if let rateLimits = payload["rate_limits"] as? [String: Any] {
-            func window(_ key: String, kind: LimitWindow.Kind) -> LimitWindow? {
+            // 한도 종류는 primary/secondary 위치가 아니라 창 길이(window_minutes)로 판별한다.
+            // 플랜에 따라 5시간+주간 두 창이 오거나, 주간 창 하나만 primary로 올 수 있다.
+            func window(_ key: String, fallback: LimitWindow.Kind) -> LimitWindow? {
                 guard let w = rateLimits[key] as? [String: Any],
                       let used = (w["used_percent"] as? NSNumber)?.doubleValue else { return nil }
+                let kind = kind(forWindowMinutes: (w["window_minutes"] as? NSNumber)?.intValue, fallback: fallback)
                 // 최신 Codex CLI는 절대 epoch 초 `resets_at`, 구버전은 상대 `resets_in_seconds`.
                 let resets: Date?
                 if let epoch = w["resets_at"] as? NSNumber {
@@ -53,8 +63,8 @@ public enum CodexLogParser {
                 }
                 return LimitWindow(kind: kind, usedPercent: used, resetsAt: resets)
             }
-            if let p = window("primary", kind: .session5h) { limits.append(p) }
-            if let s = window("secondary", kind: .weekly) { limits.append(s) }
+            if let p = window("primary", fallback: .session5h) { limits.append(p) }
+            if let s = window("secondary", fallback: .weekly) { limits.append(s) }
         }
 
         var event: TokenEvent?

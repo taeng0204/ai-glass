@@ -56,3 +56,24 @@ private let codexLineResetsAtEpoch = """
     #expect(CodexLogParser.parse(line: #"{"timestamp":"2026-06-10T14:00:00Z","type":"event_msg","payload":{"type":"agent_message"}}"#) == nil)
     #expect(CodexLogParser.parse(line: "garbage") == nil)
 }
+
+/// 고가 플랜: primary 하나가 7일(10080분) 창, secondary는 null — 5h로 오표시되면 안 된다.
+private let codexLineWeeklyOnly = """
+{"timestamp":"2026-11-03T08:25:14.420Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"limit_id":"codex","limit_name":null,"primary":{"used_percent":93.0,"window_minutes":10080,"resets_at":1793774786},"secondary":null,"credits":{},"plan_type":"pro"}}}
+"""
+
+@Test func weeklyOnlyPrimaryIsWeeklyNotSession() throws {
+    let parsed = try #require(CodexLogParser.parse(line: codexLineWeeklyOnly))
+    #expect(parsed.limits.count == 1)
+    let only = try #require(parsed.limits.first)
+    #expect(only.kind == .weekly)
+    #expect(only.usedPercent == 93.0)
+    #expect(only.resetsAt == Date(timeIntervalSince1970: 1_793_774_786))
+}
+
+@Test func windowMinutesDecidesKindRegardlessOfPosition() {
+    #expect(CodexLogParser.kind(forWindowMinutes: 299, fallback: .weekly) == .session5h)
+    #expect(CodexLogParser.kind(forWindowMinutes: 300, fallback: .weekly) == .session5h)
+    #expect(CodexLogParser.kind(forWindowMinutes: 10079, fallback: .session5h) == .weekly)
+    #expect(CodexLogParser.kind(forWindowMinutes: nil, fallback: .session5h) == .session5h)
+}
