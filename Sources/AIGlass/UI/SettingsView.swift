@@ -108,6 +108,8 @@ struct SettingsView: View {
                     }
                 }
                 .onChange(of: settings.waveStyle) { _, _ in onMenubarModeChange() }
+                Toggle("메뉴바 GPU 렌더링 (펄스 바, CPU 절약)", isOn: $settings.menubarGPU)
+                    .onChange(of: settings.menubarGPU) { _, _ in onMenubarModeChange() }
                 HStack {
                     Spacer()
                     WaveStylePreview(style: settings.waveStyle)

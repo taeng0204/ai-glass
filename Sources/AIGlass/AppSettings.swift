@@ -102,6 +102,7 @@ final class AppSettings {
         static let menubarMode = "aiglass.menubarMode"
         static let menubarItems = "aiglass.menubarItems"
         static let waveStyle = "aiglass.waveStyle"
+        static let menubarGPU = "aiglass.menubarGPU"
         static let funMilestone = "aiglass.funMilestone"
         static let funRecord = "aiglass.funRecord"
         static let funStreak = "aiglass.funStreak"
@@ -219,6 +220,11 @@ final class AppSettings {
     var waveStyle: WaveStyle {
         didSet { defaults.set(waveStyle.rawValue, forKey: Key.waveStyle) }
     }
+    /// 메뉴바를 GPU 합성 오버레이로 그린다 (펄스 바 한정 — 다른 스타일은 자동으로 기존 방식).
+    /// 상태 아이템 안의 연속 애니메이션은 macOS가 CPU로 스냅샷을 떠서 비싸므로, 별도 투명 창에 그려 CPU를 아낀다. 기본 on.
+    var menubarGPU: Bool {
+        didSet { defaults.set(menubarGPU, forKey: Key.menubarGPU) }
+    }
     /// 재미 — 마일스톤 알림. 기본 on.
     var funMilestone: Bool {
         didSet { defaults.set(funMilestone, forKey: Key.funMilestone) }
@@ -272,6 +278,7 @@ final class AppSettings {
         let resolvedMode = MenubarMode(rawValue: defaults.string(forKey: Key.menubarMode) ?? "") ?? .todayTokens
         menubarMode = resolvedMode
         waveStyle = WaveStyle(rawValue: defaults.string(forKey: Key.waveStyle) ?? "") ?? .pulseBars
+        menubarGPU = defaults.object(forKey: Key.menubarGPU) as? Bool ?? true
         funMilestone = defaults.object(forKey: Key.funMilestone) as? Bool ?? true
         funRecord = defaults.object(forKey: Key.funRecord) as? Bool ?? true
         funStreak = defaults.object(forKey: Key.funStreak) as? Bool ?? true
