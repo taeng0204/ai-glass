@@ -15,11 +15,12 @@ protocol WaveRenderer: AnyObject {
 
 enum WaveRenderers {
     /// 오버레이로 그릴 수 있는 스타일. 목록에 없는 스타일은 App이 기존 SwiftUI 방식으로 폴백한다.
-    static let supported: Set<WaveStyle> = [.pulseBars]
+    static let supported: Set<WaveStyle> = [.pulseBars, .smoothWave]
 
     @MainActor
     static func make(_ style: WaveStyle) -> WaveRenderer {
         switch style {
+        case .smoothWave: return SmoothWaveRenderer()
         default: return PulseBarsRenderer()
         }
     }
@@ -139,5 +140,56 @@ final class PulseBarsRenderer: LinearMaskedWave {
             anim.repeatCount = .infinity
             bar.add(anim, forKey: "h")
         }
+    }
+}
+
+// MARK: - 스무스 웨이브
+
+/// 연속 사인 곡선. 한 번 그려 둔 경로를 한 주기(λ)만큼 평행 이동하는 무한 애니메이션으로 흐름을 표현한다.
+/// 기존 식: y = mid + amp·sin((x/W)·4π + t·2.4) → 파장 λ = W/2, 이동 주기 2π/2.4초.
+@MainActor
+final class SmoothWaveRenderer: LinearMaskedWave {
+    private let shape = CAShapeLayer()
+    private var lastAmp = -1.0
+    private let wavelength: CGFloat = 18
+
+    init() {
+        super.init(width: 36)
+        shape.strokeColor = NSColor.white.cgColor
+        shape.fillColor = nil
+        shape.lineWidth = 2
+        shape.lineCap = .round
+        shape.lineJoin = .round
+        shape.bounds = CGRect(x: 0, y: 0, width: width + 2 * wavelength, height: height)
+        shape.position = CGPoint(x: (width + 2 * wavelength) / 2, y: height / 2)
+        content.addSublayer(shape)
+        // 절대 시간 위상에서 시작 — 이동 거리 s·λ (s: 0→1 반복). 한 주기 뒤 되돌아가도 패턴이 같아 끊김이 없다.
+        let frac0 = (Date().timeIntervalSinceReferenceDate * 2.4 / (2 * .pi)).truncatingRemainder(dividingBy: 1)
+        let anim = CABasicAnimation(keyPath: "transform.translation.x")
+        anim.fromValue = -wavelength * frac0
+        anim.toValue = -wavelength * (frac0 + 1)
+        anim.duration = 2 * .pi / 2.4
+        anim.repeatCount = .infinity
+        anim.timingFunction = CAMediaTimingFunction(name: .linear)
+        shape.add(anim, forKey: "scroll")
+    }
+
+    override func updateContent(level: Double, percent: Double, now: Date) {
+        let amplitude = 0.15 + 0.85 * level
+        let amp = (height / 2 - 1.5) * amplitude
+        guard abs(amp - lastAmp) > 0.2 else { return }
+        lastAmp = amp
+        let path = CGMutablePath()
+        let span = width + 2 * wavelength
+        let steps = 96
+        for i in 0...steps {
+            let x = span * CGFloat(i) / CGFloat(steps)
+            let y = height / 2 - amp * sin(Double(x / width) * 4 * .pi)   // CA는 y가 위로 증가 → SwiftUI와 부호 반대
+            if i == 0 { path.move(to: CGPoint(x: x, y: y)) } else { path.addLine(to: CGPoint(x: x, y: y)) }
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        shape.path = path
+        CATransaction.commit()
     }
 }
