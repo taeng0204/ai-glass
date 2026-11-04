@@ -99,6 +99,7 @@ Everything is processed **locally** and there is no telemetry. The app itself ma
 - **Antigravity** — `~/.gemini/antigravity-cli/history.jsonl` (request count, project) and `conversations/*.db` (**estimated** input / output tokens from the protobuf metadata of the SQLite conversation DB — a private format, parsed defensively and treated as an estimate). Limits come from running `agy -p "/usage"` every 5 minutes (no model call; the CLI handles its own auth).
 - **Kimi Code** — `~/.kimi-code/sessions/**/wire.jsonl` (`usage.record` events; the project comes from the session's `state.json`). Limits come from `GET {base_url}/usages` with the Kimi CLI's OAuth token. That token only lives for about 15 minutes and is refreshed by the CLI, so **limits update only while you are actively using the Kimi CLI**; otherwise the last known values are kept.
 - Daily statistics are stored in `~/Library/Application Support/AIGlass/stats.db` (SQLite).
+  The live view keeps the last 8 days in memory, but on first launch (and after upgrades that change the parsers) the app **backfills the last 35 days of logs into this database once** in the background, so the 30-day trend and heatmap are filled right away instead of growing day by day.
 
 Cost figures are **API-price estimates**, not what your subscription actually costs. For Kimi Code (a flat-rate subscription) it assumes $2 / $10 per million input / output tokens, with cache reads at 10 %.
 
