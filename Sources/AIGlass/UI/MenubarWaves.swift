@@ -15,7 +15,7 @@ protocol WaveRenderer: AnyObject {
 
 enum WaveRenderers {
     /// 오버레이로 그릴 수 있는 스타일. 목록에 없는 스타일은 App이 기존 SwiftUI 방식으로 폴백한다.
-    static let supported: Set<WaveStyle> = [.pulseBars, .smoothWave, .heartbeat, .waterFill]
+    static let supported: Set<WaveStyle> = [.pulseBars, .smoothWave, .heartbeat, .waterFill, .orbGlow]
 
     @MainActor
     static func make(_ style: WaveStyle) -> WaveRenderer {
@@ -23,6 +23,7 @@ enum WaveRenderers {
         case .smoothWave: return SmoothWaveRenderer()
         case .heartbeat: return HeartbeatRenderer()
         case .waterFill: return WaterFillRenderer()
+        case .orbGlow: return OrbGlowRenderer()
         default: return PulseBarsRenderer()
         }
     }
@@ -324,6 +325,156 @@ final class WaterFillRenderer: LinearMaskedWave {
             path.closeSubpath()
             l.shape.path = path
         }
+        CATransaction.commit()
+    }
+}
+
+// MARK: - 오브 글로우
+
+/// 숨쉬는 그라데이션 구슬. 색이 구슬 표면을 굴러가는 회전(등속 + 느린 흔들림)과 숨쉬기(크기 맥동)를 레이어 애니메이션으로 만든다.
+/// 기존 식: roll = 55°·t + 14°·sin(0.7t), scale = (1-depth) + depth·(0.5+0.5·sin(1.8t)), depth = 0.10 + 0.12·level.
+/// 근사: 글로우의 블러는 방사형 그라데이션으로 대체한다.
+@MainActor
+final class OrbGlowRenderer: WaveRenderer {
+    let layer = CALayer()
+    let width: CGFloat = 20
+    private let d: CGFloat = 16   // 구슬 지름
+    private let glow = CAGradientLayer()
+    private let orb = CALayer()          // 숨쉬기(scale) 대상
+    private let spin = CALayer()         // 등속 회전
+    private let wobble = CAGradientLayer() // 원뿔 그라데이션 + 느린 흔들림
+    private let highlight = CAGradientLayer()
+    private var stopsKey = ""
+    private var lastDepth = -1.0
+
+    init() {
+        layer.bounds = CGRect(x: 0, y: 0, width: width, height: 16)
+        let center = CGPoint(x: width / 2, y: 8)
+
+        glow.type = .radial
+        glow.bounds = CGRect(x: 0, y: 0, width: 28, height: 28)
+        glow.position = center
+        glow.startPoint = CGPoint(x: 0.5, y: 0.5)
+        // CA 방사형 그라데이션의 반지름 = 시작점~끝점의 직선 거리 → 가로로만 줘야 반지름이 14pt가 된다 (대각선이면 √2배).
+        glow.endPoint = CGPoint(x: 1, y: 0.5)
+        // 블러된 원판처럼: 안쪽은 평평하다가 반지름의 ~0.57(원판 가장자리)에서 절반, 가장자리에서 0.
+        glow.locations = [0, 0.3, 0.57, 1]
+        layer.addSublayer(glow)
+
+        orb.bounds = CGRect(x: 0, y: 0, width: d, height: d)
+        orb.position = center
+        let clip = CALayer()
+        clip.frame = orb.bounds
+        clip.cornerRadius = d / 2
+        clip.masksToBounds = true
+        orb.addSublayer(clip)
+        layer.addSublayer(orb)
+
+        spin.frame = orb.bounds
+        clip.addSublayer(spin)
+        wobble.type = .conic
+        wobble.frame = orb.bounds
+        wobble.startPoint = CGPoint(x: 0.5, y: 0.5)
+        wobble.endPoint = CGPoint(x: 1, y: 0.5)
+        spin.addSublayer(wobble)
+
+        // 하이라이트(광원)는 회전 밖 — 왼쪽 위 (SwiftUI 기준 0.35, 0.32 → y 뒤집기)
+        highlight.type = .radial
+        highlight.frame = orb.bounds
+        highlight.startPoint = CGPoint(x: 0.35, y: 0.68)
+        highlight.endPoint = CGPoint(x: 0.35 + 9.0 / 16.0, y: 0.68)   // 반지름 9pt (가로로만)
+        highlight.colors = [NSColor.white.withAlphaComponent(0.35).cgColor, NSColor.clear.cgColor]
+        clip.addSublayer(highlight)
+
+        startRotation()
+    }
+
+    /// 회전: 등속(55°/s)은 spin, 흔들림(±14°, 0.7rad/s)은 그 안의 wobble — 합성하면 기존 roll과 같다.
+    /// SwiftUI의 양의 회전은 시계 방향, CA는 반시계 방향이라 부호를 뒤집는다.
+    private func startRotation() {
+        let t0 = Date().timeIntervalSinceReferenceDate
+        let a0 = (55 * t0).truncatingRemainder(dividingBy: 360) * .pi / 180
+        let spinAnim = CABasicAnimation(keyPath: "transform.rotation.z")
+        spinAnim.fromValue = -a0
+        spinAnim.toValue = -(a0 + 2 * .pi)
+        spinAnim.duration = 360.0 / 55.0
+        spinAnim.repeatCount = .infinity
+        spinAnim.timingFunction = CAMediaTimingFunction(name: .linear)
+        spin.add(spinAnim, forKey: "spin")
+
+        let n = 40
+        let values = (0...n).map { k -> NSNumber in
+            let ph = 0.7 * t0 + 2 * Double.pi * Double(k) / Double(n)
+            return NSNumber(value: -14 * sin(ph) * .pi / 180)
+        }
+        let wob = CAKeyframeAnimation(keyPath: "transform.rotation.z")
+        wob.values = values
+        wob.calculationMode = .cubic
+        wob.duration = 2 * .pi / 0.7
+        wob.repeatCount = .infinity
+        wobble.add(wob, forKey: "wobble")
+    }
+
+    private func breathe(depth: Double, now: Date) {
+        let t0 = now.timeIntervalSinceReferenceDate
+        let n = 40
+        func anim(_ factor: Double) -> CAKeyframeAnimation {
+            let values = (0...n).map { k -> NSNumber in
+                let pulse = 0.5 + 0.5 * sin(1.8 * t0 + 2 * Double.pi * Double(k) / Double(n))
+                return NSNumber(value: factor * ((1 - depth) + depth * pulse))
+            }
+            let a = CAKeyframeAnimation(keyPath: "transform.scale")
+            a.values = values
+            a.calculationMode = .cubic
+            a.duration = 2 * .pi / 1.8
+            a.repeatCount = .infinity
+            return a
+        }
+        orb.add(anim(1.0), forKey: "breathe")
+        glow.add(anim(1.25), forKey: "breathe")
+    }
+
+    func update(share: [(ServiceID, Double)], level: Double, percent: Double, now: Date) {
+        let depth = 0.10 + 0.12 * level
+        if abs(depth - lastDepth) > 0.01 {
+            lastDepth = depth
+            breathe(depth: depth, now: now)
+        }
+        let key = share.map { "\($0.0.rawValue):\(Int($0.1 * 100))" }.joined(separator: ",")
+        guard key != stopsKey else { return }
+        stopsKey = key
+        var colors: [CGColor] = [], locs: [NSNumber] = []
+        var mixed = (r: 0.0, g: 0.0, b: 0.0)
+        if share.isEmpty {
+            let p = NSColor.systemPurple.cgColor, b = NSColor.systemBlue.cgColor
+            colors = [p, b, p]
+            locs = [0, 0.5, 1]
+            mixed = (0.69, 0.32, 0.87)
+        } else {
+            // 경계를 ±0.04 블렌딩 — 회전 시 색이 칼같이 끊기지 않고 흐르듯 섞인다. 원형으로 닫히게 첫 색을 끝에 한 번 더.
+            let blend = 0.04
+            var cursor = 0.0
+            var prev = 0.0
+            func add(_ c: CGColor, _ loc: Double) {
+                let l = max(prev, min(1, max(0, loc)))   // CA는 위치가 비감소여야 한다
+                colors.append(c); locs.append(NSNumber(value: l)); prev = l
+            }
+            for (svc, frac) in share {
+                let c = WaveGradient.cg(svc)
+                add(c, cursor + blend)
+                cursor += frac
+                add(c, cursor - blend)
+                let rgb = Theme.rgb(for: svc)
+                mixed.r += rgb.r * frac; mixed.g += rgb.g * frac; mixed.b += rgb.b * frac
+            }
+            add(WaveGradient.cg(share[0].0), 1.0)
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        wobble.colors = colors
+        wobble.locations = locs
+        func glowColor(_ a: CGFloat) -> CGColor { CGColor(red: mixed.r, green: mixed.g, blue: mixed.b, alpha: a) }
+        glow.colors = [glowColor(0.25), glowColor(0.25), glowColor(0.12), glowColor(0)]
         CATransaction.commit()
     }
 }
