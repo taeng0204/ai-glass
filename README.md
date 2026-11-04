@@ -39,7 +39,7 @@ This downloads the latest release, installs it into `/Applications` and launches
 ## Features
 
 - **Floating HUD** — a glass pill in the corner with 5 wave styles, 6-second agent rotation, hover for per-agent 5h / weekly gauges with reset countdowns, drag to move, ⌘⇧E to pin it expanded. Or use the **menu bar mini pill** mode to show the wave right in the menu bar (alert cards still pop up at the HUD position even when the HUD is off).
-- **Dashboard** — click ✦ in the menu bar or press ⌘⇧U. Overview (per-window gauges, depletion forecast, today's tokens / cost / speed), Trends (7/30-day stacked chart and a GitHub-style 15-week **usage heatmap**), Projects (per directory, colored by agent), History (alert log; hover to replay the pill).
+- **Dashboard** — click ✦ in the menu bar or press ⌘⇧U. Overview (per-window gauges, depletion forecast, today's tokens / cost / speed), Trends (7/30-day stacked chart and a GitHub-style 15-week **usage heatmap**), Projects (per directory, colored by agent), History (alert log; hover to replay the pill). The popup can be **dragged by its header grip** to wherever you like; the position is remembered (right-click the menu bar item → reset).
 - **Events** — limit warnings at 70 / 90 %, session resets (with a summary of the last session), token spikes, depletion forecasts, welcome-back messages.
 - **Briefings** — morning (yesterday's recap + streak 🔥), noon (today's pace forecast), evening (today's recap), Monday weekly report 📊.
 - **Fun** — milestone celebrations 🎉, daily records 🏆, optional sounds.
@@ -107,7 +107,7 @@ Cost figures are **API-price estimates**, not what your subscription actually co
 
 ```bash
 git clone https://github.com/taeng0204/ai-glass.git && cd ai-glass
-swift test                 # unit tests (206)
+swift test                 # unit tests (240)
 swift run AIGlass          # dev run (autostart and notifications need the .app bundle)
 bash Scripts/make-app.sh   # build the .app bundle → build/AIGlass.app
 swift run AIGlass --check-claude   # diagnose the Claude limits API connection
