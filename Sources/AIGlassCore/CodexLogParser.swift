@@ -13,6 +13,29 @@ public enum CodexLogParser {
     /// session_meta 라인에서 cwd → 프로젝트명을 반환.
     /// cwd가 홈 디렉토리와 정확히 일치하면 "~", 아니면 lastPathComponent.
     /// type != "session_meta" 이거나 파싱 실패 시 nil.
+    /// 파일의 첫 라인만 직접 읽어 session_meta에서 프로젝트명을 뽑는다 (수집기·백필 공용).
+    /// session_meta 첫 줄은 payload.instructions(AGENTS.md 내용)로 수십 KB까지 커질 수 있어
+    /// 64KB 청크로 반복 읽으며 개행을 찾는다. 상한 1MB 초과 시 nil.
+    public static func projectName(ofFile file: URL) -> String? {
+        guard let fh = FileHandle(forReadingAtPath: file.path) else { return nil }
+        defer { try? fh.close() }
+        let chunkSize = 64 * 1024
+        let maxBytes = 1024 * 1024
+        var buffer = Data()
+        var line: String?
+        while buffer.count < maxBytes {
+            guard let chunk = try? fh.read(upToCount: chunkSize), !chunk.isEmpty else { break }
+            buffer.append(chunk)
+            if let newline = buffer.firstIndex(of: UInt8(ascii: "\n")) {
+                line = String(data: buffer[buffer.startIndex..<newline], encoding: .utf8)
+                break
+            }
+        }
+        // 개행을 못 찾았을 때: 상한 초과면 nil, 그 외엔 전체를 한 줄로 간주
+        if line == nil, buffer.count < maxBytes, !buffer.isEmpty { line = String(data: buffer, encoding: .utf8) }
+        return line.flatMap { parseSessionMeta(line: $0) }
+    }
+
     public static func parseSessionMeta(line: String) -> String? {
         guard !line.isEmpty,
               let data = line.data(using: .utf8),

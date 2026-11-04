@@ -67,31 +67,10 @@ public final class CodexCollector {
 
     public init(root: URL) { self.root = root }
 
-    /// 파일의 첫 라인만 직접 읽어 session_meta 파싱 시도. IncrementalLineReader와 독립.
-    /// session_meta 첫 줄은 payload.instructions(AGENTS.md 내용)로 수십 KB까지 커질 수 있어
-    /// 64KB 청크로 반복 읽으며 개행을 찾는다. 상한 1MB 초과 시 nil.
-    private func readFirstLine(of file: URL) -> String? {
-        guard let fh = FileHandle(forReadingAtPath: file.path) else { return nil }
-        defer { try? fh.close() }
-        let chunkSize = 64 * 1024
-        let maxBytes = 1024 * 1024
-        var buffer = Data()
-        while buffer.count < maxBytes {
-            guard let chunk = try? fh.read(upToCount: chunkSize), !chunk.isEmpty else { break }
-            buffer.append(chunk)
-            if let newline = buffer.firstIndex(of: UInt8(ascii: "\n")) {
-                return String(data: buffer[buffer.startIndex..<newline], encoding: .utf8)
-            }
-        }
-        // 상한 초과(개행 못 찾음) 시 nil, 그 외엔 전체를 한 줄로 간주
-        if buffer.count >= maxBytes { return nil }
-        return buffer.isEmpty ? nil : String(data: buffer, encoding: .utf8)
-    }
-
     private func project(for file: URL) -> String? {
         let path = file.path
         if let cached = projectCache[path] { return cached }
-        let result: String? = readFirstLine(of: file).flatMap { CodexLogParser.parseSessionMeta(line: $0) }
+        let result = CodexLogParser.projectName(ofFile: file)
         projectCache[path] = result
         return result
     }
