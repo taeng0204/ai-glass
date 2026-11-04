@@ -5,96 +5,124 @@
 <h1 align="center">AI Glass</h1>
 
 <p align="center">
-  Claude Code · Codex · Antigravity 사용량을 <b>liquid glass</b>로 보여주는 macOS 메뉴바 앱
+  A macOS menu bar app that shows your <b>Claude Code · Codex · Antigravity · Kimi Code</b> usage in <b>liquid glass</b>
+</p>
+
+<p align="center">
+  <b>English</b> · <a href="README.ko.md">한국어</a>
 </p>
 
 <p align="center">
   <a href="https://github.com/taeng0204/ai-glass/releases"><img src="https://img.shields.io/github/v/release/taeng0204/ai-glass?label=release" alt="release"></a>
+  <a href="https://github.com/taeng0204/ai-glass/actions/workflows/ci.yml"><img src="https://github.com/taeng0204/ai-glass/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/macOS-26%2B-blue" alt="macOS 26+">
   <img src="https://img.shields.io/badge/Swift-6-orange" alt="Swift 6">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"></a>
 </p>
 
 <p align="center">
-  <img src="docs/images/hud-pill.png" width="326" alt="플로팅 HUD 알약">
+  <img src="docs/images/hud-pill.png" width="326" alt="Floating HUD pill">
 </p>
 
-화면 우상단에 항상 떠 있는 **펄스 웨이브 알약**이 AI 코딩 에이전트들의 토큰 소모를 실시간으로 보여줍니다. 토큰이 빨리 탈수록 파도가 크게 출렁이고, 색 띠는 지금 어떤 에이전트가 일하는지 알려줍니다. 한도가 임박하면 알약이 카드로 모핑되며 경고하고, 새 세션이 시작되면 지난 세션을 요약해줍니다.
+A **pulse-wave pill** floats in the corner of your screen and shows, in real time, how fast your AI coding agents are burning tokens. The faster they burn, the bigger the waves; the color bands tell you which agent is working right now. When a limit is about to run out the pill morphs into a warning card, and when a new session starts it summarizes the previous one.
 
-## 설치 (원클릭)
+## Install (one line)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/taeng0204/ai-glass/main/install.sh | bash
 ```
 
-최신 릴리스를 받아 `/Applications`에 설치하고 바로 실행합니다. 또는 [Releases](https://github.com/taeng0204/ai-glass/releases)에서 zip을 직접 받아 `/Applications`에 넣어도 됩니다 (이 경우 최초 실행은 **우클릭 → 열기** — ad-hoc 서명 빌드라 Gatekeeper 확인이 한 번 필요합니다).
+This downloads the latest release, installs it into `/Applications` and launches it. You can also grab the zip from [Releases](https://github.com/taeng0204/ai-glass/releases) and drop it into `/Applications` (the first launch then needs **right-click → Open**, because release builds are ad-hoc signed and Gatekeeper asks once).
 
-> 요구사항: **macOS 26 (Tahoe) 이상** — 네이티브 liquid glass API를 사용합니다. Claude Code / Codex / Antigravity 중 1개 이상 사용 이력이 있으면 됩니다.
+> Requirements: **macOS 26 (Tahoe) or later** — the app uses the native liquid glass APIs. You need a usage history with at least one of Claude Code, Codex, Antigravity (`agy`) or Kimi Code.
 
-## 기능
+## Features
 
-- **플로팅 HUD**: 우상단 glass 알약, 웨이브 스타일 5종, 6초 서비스 로테이션, 호버 시 에이전트별 5h·주간 게이지+리셋 카운트다운, 드래그 이동, ⌘⇧E 고정 확장 — 또는 **메뉴바 미니 알약** 모드로 메뉴바 안에서 웨이브 표시 (HUD를 꺼도 알림 카드는 그 위치에 떠오름)
-- **대시보드**: 메뉴바 ✦ 클릭 또는 ⌘⇧U, 개요(윈도우별 게이지·소진 예측·오늘 토큰/비용/속도), 추이(7/30일 스택 차트 + **사용 잔디** — GitHub 스타일 15주 히트맵), 프로젝트(디렉토리별, 에이전트 색 구분), 기록(알림 히스토리, 호버 시 알약 리플레이)
-- **이벤트**: 한도 70/90% 임박, 세션 리셋(직전 세션 요약), 토큰 급증, 소진 예측, 복귀 인사
-- **브리핑**: 아침(어제 요약+스트릭 🔥), 점심(오늘 페이스 예측), 저녁(오늘 요약), 월요일 주간 리포트 📊
-- **재미**: 마일스톤 돌파 🎉, 일일 신기록 🏆, 사운드 옵션
-- **메뉴바**: 웨이브 알약·오늘 토큰·소모 속도 등을 원하는 만큼 골라 한 줄에 표시 (모두 끄면 ✦ 아이콘만)
-- **온보딩**: 첫 실행 시 HUD/메뉴바 사용 방식(트랙)을 고르고, 웨이브 스타일·메뉴바 항목·에이전트를 라이브 프리뷰로 선택
-- **업데이트 알림**: 새 버전이 나오면 알림 1회 + 대시보드 헤더에 ↓ 배지 (클릭 시 릴리스 페이지)
+- **Floating HUD** — a glass pill in the corner with 5 wave styles, 6-second agent rotation, hover for per-agent 5h / weekly gauges with reset countdowns, drag to move, ⌘⇧E to pin it expanded. Or use the **menu bar mini pill** mode to show the wave right in the menu bar (alert cards still pop up at the HUD position even when the HUD is off).
+- **Dashboard** — click ✦ in the menu bar or press ⌘⇧U. Overview (per-window gauges, depletion forecast, today's tokens / cost / speed), Trends (7/30-day stacked chart and a GitHub-style 15-week **usage heatmap**), Projects (per directory, colored by agent), History (alert log; hover to replay the pill).
+- **Events** — limit warnings at 70 / 90 %, session resets (with a summary of the last session), token spikes, depletion forecasts, welcome-back messages.
+- **Briefings** — morning (yesterday's recap + streak 🔥), noon (today's pace forecast), evening (today's recap), Monday weekly report 📊.
+- **Fun** — milestone celebrations 🎉, daily records 🏆, optional sounds.
+- **Menu bar** — pick any combination of the wave pill, today's tokens, burn rate, usage % and reset countdown on a single line (turn them all off for just the ✦ icon).
+- **Onboarding** — on first launch choose HUD or menu bar, then pick wave style, menu bar items and agents with live previews.
+- **Update notice** — one notification when a new version is released, plus a ↓ badge in the dashboard header.
 
-## 스크린샷
+### Per-agent limits
+
+| Agent | What is shown |
+|---|---|
+| **Claude Code** | Exact 5h / weekly usage % from the Anthropic usage API |
+| **Codex** | Rate-limit snapshots from the session logs. Windows are classified by their length, so **weekly-only plans** (e.g. Pro) show a weekly gauge instead of a bogus 5h one |
+| **Antigravity** | Real quota from `agy -p "/usage"` for the **Gemini 4 Argon** group (5h / weekly). If `agy` is missing or fails for 30 minutes, it falls back to an estimated daily-request gauge |
+| **Kimi Code** | 5h / weekly / monthly limits from the Kimi usage API (see the caveat below) + token usage from the session logs |
+
+## Menu bar rendering (GPU)
+
+Continuous animation inside a menu bar item is expensive: macOS re-renders the item on the CPU for every frame, and once per display. A naive SwiftUI pill burned **~60 % CPU** while agents were running.
+
+AI Glass instead reserves the space with the status item and draws the pill in a transparent, click-through panel on top of it, animated with Core Animation. The compositor (GPU) plays the animation and the app only wakes once a second to update text and colors — **about 0.5–1 % CPU**, with all five wave styles.
+
+- The overlay is drawn on the **main display's** menu bar only. On secondary displays macOS shows an empty slot where the item is.
+- When macOS hides the item (for example, the frontmost app's menus are too long) the overlay hides with it.
+
+## Screenshots
 
 <table align="center">
   <tr>
-    <th width="50%">대시보드 메인</th>
-    <th width="50%">HUD 확장</th>
+    <th width="50%">Dashboard overview</th>
+    <th width="50%">Expanded HUD</th>
   </tr>
   <tr>
-    <td align="center"><img src="docs/images/dashboard-overview.png" width="360" alt="대시보드 메인 — 에이전트별 사용량, 한도 경고, 오늘 토큰, 비용, 속도"></td>
-    <td align="center"><img src="docs/images/hud-expanded.png" width="300" alt="HUD 확장 — 에이전트별 5h, 주간, 일일 사용량"></td>
+    <td align="center"><img src="docs/images/dashboard-overview.png" width="360" alt="Dashboard overview — per-agent usage, limit warnings, today's tokens, cost and speed"></td>
+    <td align="center"><img src="docs/images/hud-expanded.png" width="300" alt="Expanded HUD — per-agent 5h, weekly and daily usage"></td>
   </tr>
   <tr>
-    <th width="50%">추이 차트</th>
-    <th width="50%">한도 알림</th>
+    <th width="50%">Trends</th>
+    <th width="50%">Limit alert</th>
   </tr>
   <tr>
-    <td align="center"><img src="docs/images/dashboard-trends.png" width="360" alt="추이 차트 — 최근 7일 에이전트별 토큰 사용량"></td>
-    <td align="center"><img src="docs/images/limit-alert.png" width="260" alt="한도 임박 알림 — Claude 소진 임박 경고"></td>
+    <td align="center"><img src="docs/images/dashboard-trends.png" width="360" alt="Trends — per-agent token usage over the last 7 days"></td>
+    <td align="center"><img src="docs/images/limit-alert.png" width="260" alt="Limit alert — Claude is about to run out"></td>
   </tr>
 </table>
 
 <p align="center">
-  <img src="docs/images/onboarding-waves.png" width="480" alt="온보딩 — 웨이브 스타일 선택">
+  <img src="docs/images/onboarding-waves.png" width="480" alt="Onboarding — choosing a wave style">
 </p>
 
-## 데이터 소스 & 프라이버시
+## Data sources & privacy
 
-모든 처리는 **로컬**에서 이루어집니다. 외부 네트워크 요청은 둘뿐이며 — Claude 한도 조회용 Anthropic 사용량 API, 새 버전 확인용 GitHub Releases API(하루 1회) — 텔레메트리는 없습니다.
+Everything is processed **locally** and there is no telemetry. The app itself makes only three kinds of network requests: the Anthropic usage API (Claude limits), the Kimi usage API (Kimi limits) and the GitHub Releases API (update check, once a day). The `agy` CLI, which the app runs for Antigravity quota, talks to Google on its own.
 
-- **Claude**: `~/.claude/projects/**/*.jsonl` (토큰·모델·프로젝트) + Keychain OAuth → 사용량 API (정확한 5h/주간 %) — 최초 1회 Keychain 다이얼로그에서 **"항상 허용"** 권장
-- **Codex**: `~/.codex/sessions/**/*.jsonl` (rate limit 스냅샷 + 토큰 + 프로젝트)
-- **Antigravity**: `~/.gemini/antigravity-cli/history.jsonl` (요청 수·프로젝트) + `conversations/*.db` (SQLite 대화 DB의 protobuf 메타데이터에서 입·출력 토큰을 **추정** — 비공개 포맷이라 방어적으로 파싱하며 결과는 추정치로 취급)
-- 일별 통계는 `~/Library/Application Support/AIGlass/stats.db` (SQLite)에 저장
+- **Claude** — `~/.claude/projects/**/*.jsonl` (tokens, model, project) plus the Claude Code OAuth token from the Keychain for the usage API (exact 5h / weekly %). The token is read through the macOS `security` tool, which is already trusted by that Keychain item, so **no password dialog appears**.
+- **Codex** — `~/.codex/sessions/**/*.jsonl` (rate-limit snapshots, tokens, project).
+- **Antigravity** — `~/.gemini/antigravity-cli/history.jsonl` (request count, project) and `conversations/*.db` (**estimated** input / output tokens from the protobuf metadata of the SQLite conversation DB — a private format, parsed defensively and treated as an estimate). Limits come from running `agy -p "/usage"` every 5 minutes (no model call; the CLI handles its own auth).
+- **Kimi Code** — `~/.kimi-code/sessions/**/wire.jsonl` (`usage.record` events; the project comes from the session's `state.json`). Limits come from `GET {base_url}/usages` with the Kimi CLI's OAuth token. That token only lives for about 15 minutes and is refreshed by the CLI, so **limits update only while you are actively using the Kimi CLI**; otherwise the last known values are kept.
+- Daily statistics are stored in `~/Library/Application Support/AIGlass/stats.db` (SQLite).
 
-비용 표시는 **API 단가 환산 추정치**입니다 — 구독 플랜 실비가 아닙니다.
+Cost figures are **API-price estimates**, not what your subscription actually costs. For Kimi Code (a flat-rate subscription) it assumes $2 / $10 per million input / output tokens, with cache reads at 10 %.
 
-## 소스에서 빌드
+## Build from source
 
 ```bash
 git clone https://github.com/taeng0204/ai-glass.git && cd ai-glass
-swift test                 # 단위 테스트 (161개)
-swift run AIGlass          # 개발 실행 (자동시작·알림은 .app 번들 전용)
-bash Scripts/make-app.sh   # .app 번들 생성 → build/AIGlass.app
-swift run AIGlass --check-claude   # Claude 한도 API 연결 진단
+swift test                 # unit tests (206)
+swift run AIGlass          # dev run (autostart and notifications need the .app bundle)
+bash Scripts/make-app.sh   # build the .app bundle → build/AIGlass.app
+swift run AIGlass --check-claude   # diagnose the Claude limits API connection
 ```
 
-> ad-hoc 서명이라 재빌드 시 Keychain 허용을 다시 묻습니다 (Apple Developer 인증서 없이는 피할 수 없는 macOS 정책).
+**Optional — a stable signing identity.** By default `make-app.sh` signs ad-hoc, so every rebuild is a "new app" to macOS (for example Gatekeeper asks again). To keep a stable identity across rebuilds, run this once; `make-app.sh` then signs with the local certificate `AIGlass Local` automatically:
 
-## 단축키
+```bash
+bash Scripts/setup-signing.sh
+```
 
-- **⌘⇧U** — 대시보드 열기/닫기
-- **⌘⇧E** — 알약 확장 고정/해제
+## Keyboard shortcuts
 
-## 라이선스
+- **⌘⇧U** — open / close the dashboard
+- **⌘⇧E** — pin / unpin the expanded pill
+
+## License
 
 [MIT](LICENSE) © 2026 taeng0204
