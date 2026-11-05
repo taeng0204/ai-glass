@@ -112,6 +112,27 @@ final class MenubarOverlay {
         item.button?.title = ""
         item.button?.image = nil
 
+        // ⌘+클릭이 우리 아이템 위에서 시작되면 좌표가 흔들리기를 기다리지 않고 바로 드래그 모드로 들어간다.
+        // 놓으면(mouseUp) 곧바로 재확인한다. (마우스 이벤트 전역 감시는 별도 권한이 필요 없다)
+        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) { [weak self] event in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if event.type == .leftMouseDown {
+                    guard event.modifierFlags.contains(.command), let pf = self.primaryFrame,
+                          pf.insetBy(dx: -4, dy: -4).contains(NSEvent.mouseLocation) else { return }
+                    self.panel.orderOut(nil)
+                    self.showDragPlaceholder()
+                    self.dragging = true
+                    self.dragStartedAt = Date()
+                } else if self.dragging {
+                    self.dragging = false
+                    self.recentFrames.removeAll()
+                    self.stableSince = .distantPast
+                    self.scheduleSettleCheck(after: Self.settleTime + 0.05)
+                }
+            }
+        }
+
         root.wantsLayer = true
         root.frame = NSRect(x: 0, y: 0, width: 100, height: height)
         root.autoresizingMask = [.width, .height]
@@ -417,9 +438,54 @@ final class MenubarOverlay {
     private var recentFrames: [(at: Date, frame: NSRect)] = []
     private var stableFrame: NSRect = .zero
     private var stableSince = Date.distantPast
-    private static let settleTime: TimeInterval = 0.3
-    private static let flapWindow: TimeInterval = 0.6
+    private static let settleTime: TimeInterval = 0.15
+    private static let flapWindow: TimeInterval = 0.35
+    private var mouseMonitor: Any?
     private var settleCheck: DispatchWorkItem?
+    private var placeholderShown = false
+    private var dragging = false
+    private var dragStartedAt = Date.distantPast
+
+    /// 드래그 중에는 오버레이를 숨기므로 시스템이 보여 주는 아이템이 투명해 위치를 알 수 없다.
+    /// 그동안만 버튼에 고정 알약 모양을 얹어 둔다 (안정되면 제거).
+    private func showDragPlaceholder() {
+        guard !placeholderShown, let button = item?.button else { return }
+        placeholderShown = true
+        let size = NSSize(width: max(24, lastWidth - 4), height: 18)
+        let image = NSImage(size: size, flipped: false) { rect in
+            let path = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: rect.height / 2, yRadius: rect.height / 2)
+            NSColor.labelColor.withAlphaComponent(0.22).setFill()
+            path.fill()
+            NSColor.labelColor.withAlphaComponent(0.5).setStroke()
+            path.lineWidth = 1
+            path.stroke()
+            // 웨이브 느낌의 막대 몇 개
+            NSColor.labelColor.withAlphaComponent(0.6).setFill()
+            let barW: CGFloat = 2, gap: CGFloat = 3
+            let hs: [CGFloat] = [5, 9, 12, 8, 11, 6, 9]
+            var x = (rect.width - (CGFloat(hs.count) * barW + CGFloat(hs.count - 1) * gap)) / 2
+            for h in hs where x + barW < rect.width {
+                NSBezierPath(roundedRect: NSRect(x: x, y: (rect.height - h) / 2, width: barW, height: h), xRadius: 1, yRadius: 1).fill()
+                x += barW + gap
+            }
+            return true
+        }
+        button.imagePosition = .imageOnly
+        button.image = image
+    }
+
+    private func scheduleSettleCheck(after delay: TimeInterval) {
+        settleCheck?.cancel()
+        let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.syncPanel() } }
+        settleCheck = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    private func hideDragPlaceholder() {
+        guard placeholderShown, let button = item?.button else { return }
+        placeholderShown = false
+        button.image = nil
+    }
 
     /// 메인 화면 메뉴바에서 최근(8초 이내)에 확인된 상태 아이템 창 프레임. 대시보드 팝업의 기본 위치 기준.
     /// 아이템이 숨겨졌거나 위치를 모르면 nil.
@@ -446,13 +512,15 @@ final class MenubarOverlay {
         let settled = now.timeIntervalSince(stableSince) >= Self.settleTime
         if flapping || !settled {
             // 흔들리거나 막 바뀐 좌표는 믿지 않는다 — 숨기고, 안정될 즈음 다시 확인한다.
-            if flapping { panel.orderOut(nil) }
-            settleCheck?.cancel()
-            let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.syncPanel() } }
-            settleCheck = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + Self.settleTime + 0.05, execute: work)
+            if flapping {
+                panel.orderOut(nil)
+                showDragPlaceholder()
+            }
+            scheduleSettleCheck(after: Self.settleTime + 0.05)
             return
         }
+        if dragging, now.timeIntervalSince(dragStartedAt) < 8 { return }
+        dragging = false   // 버튼을 아직 누르고 있다 — 놓을 때까지 숨김 유지
         // 메뉴바 띠(visibleFrame 위 ~ 화면 맨 위) 안에 있을 때만 인정한다 (엄격한 부등호).
         // 메인 화면 = 원점이 (0,0)인 화면 (screens 배열 순서는 디스플레이 재구성 때 순간적으로 바뀔 수 있어 쓰지 않는다).
         if let main = NSScreen.screens.first(where: { $0.frame.origin == .zero }),
@@ -463,6 +531,7 @@ final class MenubarOverlay {
             primaryFrame = f
             primarySeenAt = now
         }
+        hideDragPlaceholder()
         guard let pf = primaryFrame, now.timeIntervalSince(primarySeenAt) < 8 else {
             panel.orderOut(nil)
             return
