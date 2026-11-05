@@ -412,6 +412,14 @@ final class MenubarOverlay {
     /// 메인 화면 메뉴바에서 마지막으로 보고된 상태 아이템 창 위치.
     private var primaryFrame: NSRect?
     private var primarySeenAt = Date.distantPast
+    /// 최근 창 좌표 표본 — ⌘+드래그로 아이템을 옮기는 동안 창 좌표가 제자리와 드래그 프록시(엉뚱한 위치) 사이를
+    /// 수 ms 간격으로 오간다. 흔들리는 동안은 오버레이를 숨기고, 같은 좌표가 이 시간 이상 유지될 때만 인정한다.
+    private var recentFrames: [(at: Date, frame: NSRect)] = []
+    private var stableFrame: NSRect = .zero
+    private var stableSince = Date.distantPast
+    private static let settleTime: TimeInterval = 0.3
+    private static let flapWindow: TimeInterval = 0.6
+    private var settleCheck: DispatchWorkItem?
 
     /// 메인 화면 메뉴바에서 최근(8초 이내)에 확인된 상태 아이템 창 프레임. 대시보드 팝업의 기본 위치 기준.
     /// 아이템이 숨겨졌거나 위치를 모르면 nil.
@@ -431,6 +439,20 @@ final class MenubarOverlay {
         observe(win)
         let f = win.frame
         let now = Date()
+        recentFrames.append((now, f))
+        recentFrames.removeAll { now.timeIntervalSince($0.at) > Self.flapWindow }
+        if f != stableFrame { stableFrame = f; stableSince = now }
+        let flapping = recentFrames.contains { $0.frame != f }
+        let settled = now.timeIntervalSince(stableSince) >= Self.settleTime
+        if flapping || !settled {
+            // 흔들리거나 막 바뀐 좌표는 믿지 않는다 — 숨기고, 안정될 즈음 다시 확인한다.
+            if flapping { panel.orderOut(nil) }
+            settleCheck?.cancel()
+            let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.syncPanel() } }
+            settleCheck = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.settleTime + 0.05, execute: work)
+            return
+        }
         // 메뉴바 띠(visibleFrame 위 ~ 화면 맨 위) 안에 있을 때만 인정한다 (엄격한 부등호).
         // 메인 화면 = 원점이 (0,0)인 화면 (screens 배열 순서는 디스플레이 재구성 때 순간적으로 바뀔 수 있어 쓰지 않는다).
         if let main = NSScreen.screens.first(where: { $0.frame.origin == .zero }),
