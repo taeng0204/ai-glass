@@ -320,7 +320,7 @@ final class MenubarOverlay {
 
         // 마지막 라벨의 NSTextField 셀 안쪽 여백(오른쪽 ~2pt)은 빈 공간이라 잘라낸다 — 글자는 잘리지 않는다.
         let width = max(1, x - 2)
-        if abs(width - lastWidth) > 0.5 { lastWidth = width; item?.length = width }
+        if abs(width - lastWidth) > 0.5 { lastWidth = width; item?.length = max(1, width - Self.rightTuck) }
         syncPanel()
     }
 
@@ -439,6 +439,9 @@ final class MenubarOverlay {
     private var recentFrames: [(at: Date, frame: NSRect)] = []
     private var stableFrame: NSRect = .zero
     private var stableSince = Date.distantPast
+    /// 시스템은 아이템 양옆에 ~8pt 여백을 둔다. 아이템 길이를 이만큼 줄이고 오버레이는 왼쪽 기준으로 그리면
+    /// 알약이 오른쪽 여백으로 넘쳐 이웃과의 간격이 줄어든다 (오버레이는 클릭 통과라 이웃 아이템에 영향 없음).
+    private static let rightTuck: CGFloat = 6
     private static let settleTime: TimeInterval = 0.15
     private static let flapWindow: TimeInterval = 0.35
     private var mouseMonitor: Any?
@@ -539,7 +542,7 @@ final class MenubarOverlay {
         }
         panel.appearance = button.effectiveAppearance
         let width = max(1, lastWidth)
-        let target = NSRect(x: pf.minX + (pf.width - width) / 2, y: pf.minY + (pf.height - height) / 2,
+        let target = NSRect(x: pf.minX + (pf.width - (width - Self.rightTuck)) / 2, y: pf.minY + (pf.height - height) / 2,
                             width: width, height: height)
         if panel.frame != target { panel.setFrame(target, display: false) }
         if !panel.isVisible { panel.orderFrontRegardless() }
