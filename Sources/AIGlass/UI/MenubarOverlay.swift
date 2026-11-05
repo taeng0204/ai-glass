@@ -318,7 +318,8 @@ final class MenubarOverlay {
             r.update(share: activeShare(now: now), level: level, percent: curPercent ?? maxPercent, now: now)
         }
 
-        let width = max(1, x)
+        // 마지막 라벨의 NSTextField 셀 안쪽 여백(오른쪽 ~2pt)은 빈 공간이라 잘라낸다 — 글자는 잘리지 않는다.
+        let width = max(1, x - 2)
         if abs(width - lastWidth) > 0.5 { lastWidth = width; item?.length = width }
         syncPanel()
     }
