@@ -1,13 +1,21 @@
 import Foundation
 
-@MainActor
-public final class ClaudeCollector {
+/// 수집기는 **읽기(scan)** 와 **반영(apply)** 으로 나뉜다. scan은 파일 IO·파싱이라 무거워서 백그라운드에서 돌리고
+/// (한 번에 하나만 — 내부 상태가 있다), apply만 메인에서 한다. 메인 스레드가 오래 막히면 접근성(AX) 요청에 못 답해
+/// Hidden Bar 같은 메뉴바 정리 앱이 접을 때 우리 아이템을 허용 목록에서 빼 버린다.
+public final class ClaudeCollector: @unchecked Sendable {
     private let root: URL
     private let reader = IncrementalLineReader()
 
     public init(root: URL) { self.root = root }
 
-    public func collect(into store: UsageStore) {
+    @MainActor public func collect(into store: UsageStore) { apply(scan(), into: store) }
+
+    @MainActor public func apply(_ batch: [(TokenEvent, String?)], into store: UsageStore) {
+        if !batch.isEmpty { store.addEvents(batch) }
+    }
+
+    public func scan() -> [(TokenEvent, String?)] {
         var batch: [(TokenEvent, String?)] = []
         for file in LogLocator.recentFiles(under: root, suffix: ".jsonl") {
             // 토큰 줄만 String으로 만든다 — usage가 없는 줄(대화 본문 등)은 파싱도 안 한다.
@@ -17,12 +25,11 @@ public final class ClaudeCollector {
                 }
             }
         }
-        if !batch.isEmpty { store.addEvents(batch) }
+        return batch
     }
 }
 
-@MainActor
-public final class KimiCollector {
+public final class KimiCollector: @unchecked Sendable {
     private let root: URL
     private let reader = IncrementalLineReader()
     private var projectCache: [String: String?] = [:]
@@ -40,8 +47,16 @@ public final class KimiCollector {
     }
 
     /// 새 이벤트가 추가됐으면 true (한도 즉시 갱신 트리거용).
-    @discardableResult
-    public func collect(into store: UsageStore) -> Bool {
+    @MainActor @discardableResult
+    public func collect(into store: UsageStore) -> Bool { apply(scan(), into: store) }
+
+    @MainActor @discardableResult
+    public func apply(_ batch: [(TokenEvent, String?)], into store: UsageStore) -> Bool {
+        if !batch.isEmpty { store.addEvents(batch) }
+        return !batch.isEmpty
+    }
+
+    public func scan() -> [(TokenEvent, String?)] {
         var batch: [(TokenEvent, String?)] = []
         for file in LogLocator.recentFiles(under: root, suffix: "wire.jsonl") {
             let proj = project(for: file)
@@ -53,13 +68,11 @@ public final class KimiCollector {
                 }
             }
         }
-        if !batch.isEmpty { store.addEvents(batch) }
-        return !batch.isEmpty
+        return batch
     }
 }
 
-@MainActor
-public final class CodexCollector {
+public final class CodexCollector: @unchecked Sendable {
     private let root: URL
     private let reader = IncrementalLineReader()
     private var latestLimitsTimestamp: Date = .distantPast
@@ -76,7 +89,19 @@ public final class CodexCollector {
         return result
     }
 
-    public func collect(into store: UsageStore) {
+    public struct Scan {
+        var batch: [(TokenEvent, String?)] = []
+        var limits: [LimitWindow]?
+    }
+
+    @MainActor public func collect(into store: UsageStore) { apply(scan(), into: store) }
+
+    @MainActor public func apply(_ scan: Scan, into store: UsageStore) {
+        if !scan.batch.isEmpty { store.addEvents(scan.batch) }
+        if let limits = scan.limits { store.setLimits(limits, for: .codex) }
+    }
+
+    public func scan() -> Scan {
         var batch: [(TokenEvent, String?)] = []
         var latestLimits: [LimitWindow]?
         for file in LogLocator.recentFiles(under: root, suffix: ".jsonl") {
@@ -105,13 +130,11 @@ public final class CodexCollector {
                 }
             }
         }
-        if !batch.isEmpty { store.addEvents(batch) }
-        if let latestLimits { store.setLimits(latestLimits, for: .codex) }
+        return Scan(batch: batch, limits: latestLimits)
     }
 }
 
-@MainActor
-public final class GeminiCollector {
+public final class GeminiCollector: @unchecked Sendable {
     private let root: URL
     private let dailyQuota: Int
     /// Antigravity(agy) CLI 히스토리 파일. 작아서 매번 전체 재읽기.
@@ -149,7 +172,26 @@ public final class GeminiCollector {
                 .appendingPathComponent(".gemini/antigravity-cli/conversations")
     }
 
-    public func collect(into store: UsageStore, now: Date = Date()) {
+    public struct Scan {
+        var requestDates: [Date] = []
+        var conversationBatch: [(TokenEvent, String?)] = []
+        var now = Date()
+    }
+
+    @MainActor public func collect(into store: UsageStore, now: Date = Date()) {
+        apply(scan(now: now), into: store)
+    }
+
+    @MainActor public func apply(_ scan: Scan, into store: UsageStore) {
+        store.setGeminiRequests(scan.requestDates)
+        if !scan.conversationBatch.isEmpty { store.addEvents(scan.conversationBatch) }
+        // agy /usage의 실제 쿼터를 받아오는 중이면 요청 수 기반 일일 추정치는 덮어쓰지 않는다.
+        guard publishesDailyEstimate else { return }
+        let window = GeminiLogParser.dailyWindow(requestDates: scan.requestDates, quota: dailyQuota, now: scan.now)
+        store.setLimits([window], for: .gemini)
+    }
+
+    public func scan(now: Date = Date()) -> Scan {
         // 요청 소스(logs.json·log·history)가 직전과 동일하면 재파싱 스킵 — 캐시된 날짜 재사용.
         // (dailyWindow는 now 의존이라 항상 재계산하지만, 무거운 파일 읽기·JSON 파싱만 건너뜀.)
         let signature = requestSourcesSignature()
@@ -175,21 +217,14 @@ public final class GeminiCollector {
             cachedRequestDates = allDates
             lastRequestSignature = signature
         }
-        store.setGeminiRequests(allDates)
-
         // Antigravity 대화 DB에서 토큰 이벤트 적재 (추정치, 비공개 포맷) — 추이·프로젝트 통계의 원천.
         // 한도 게시 여부와 무관하게 항상 실행한다. (실제 쿼터를 쓰는 동안 이 단계가 통째로 건너뛰어져
         // Antigravity가 추이·프로젝트에 안 잡히던 버그가 있었다.)
-        collectConversationTokens(into: store)
-
-        // agy /usage의 실제 쿼터를 받아오는 중이면 요청 수 기반 일일 추정치는 덮어쓰지 않는다.
-        guard publishesDailyEstimate else { return }
-        let window = GeminiLogParser.dailyWindow(requestDates: allDates, quota: dailyQuota, now: now)
-        store.setLimits([window], for: .gemini)
+        return Scan(requestDates: allDates, conversationBatch: collectConversationTokens(), now: now)
     }
 
     /// 최근 8일 mtime의 `<convId>.db`를 READONLY로 읽어 새 generation을 TokenEvent로 적재한다.
-    private func collectConversationTokens(into store: UsageStore) {
+    private func collectConversationTokens() -> [(TokenEvent, String?)] {
         // 폴백용 conversationId → 프로젝트 조인 (history.jsonl). 필요할 때 1회만 읽음.
         var projectMap: [String: String]?
 
@@ -232,7 +267,7 @@ public final class GeminiCollector {
             }
             if let signature { lastScanSignature[path] = signature }
         }
-        if !batch.isEmpty { store.addEvents(batch) }
+        return batch
     }
 
     /// db 콘텐츠 변경 감지용 시그니처 — WAL 모드에선 쓰기가 `-wal`에 먼저 가므로

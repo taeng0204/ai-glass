@@ -457,20 +457,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    /// 읽기(파일 IO·파싱)는 백그라운드, 반영과 화면 갱신만 메인. 수집기는 내부 상태가 있어 한 번에 하나만 돌리고,
+    /// 도는 중에 요청이 오면 끝난 뒤 한 번 더 돈다. (메인 스레드가 막히면 접근성 요청에 못 답해
+    /// Hidden Bar 등이 접을 때 우리 아이템을 허용 목록에서 빼 버린다.)
+    private var scanInFlight = false
+    private var scanPending = false
+
     func refresh() {
-        claudeCollector.collect(into: store)
-        codexCollector.collect(into: store)
+        guard !scanInFlight else { scanPending = true; return }
+        scanInFlight = true
         // agy 실제 쿼터가 30분 넘게 갱신되지 않으면 요청 수 기반 추정 게이지로 되돌린다.
         if let last = agyQuotaLastSuccess, Date().timeIntervalSince(last) > 30 * 60 {
             geminiCollector.publishesDailyEstimate = true
         }
-        geminiCollector.collect(into: store)
-        // 새 Kimi 이벤트 직후엔 CLI가 방금 토큰을 갱신했을 가능성이 높아 한도를 바로 조회한다.
-        if kimiCollector.collect(into: store) { pollKimiLimits() }
+        let claude = claudeCollector, codex = codexCollector, gemini = geminiCollector, kimi = kimiCollector
+        Task { @MainActor [weak self] in
+            let scans = await Task.detached(priority: .utility) {
+                (claude.scan(), codex.scan(), gemini.scan(), kimi.scan())
+            }.value
+            guard let self else { return }
+            // 단계 사이마다 런루프가 한 바퀴 돌 틈을 준다 — 시작 때 claude 반영이 ~80ms라 이어 붙이면
+            // 접근성 요청(0.1초 제한)에 못 답한다.
+            claude.apply(scans.0, into: self.store)
+            await Self.breathe()
+            codex.apply(scans.1, into: self.store)
+            gemini.apply(scans.2, into: self.store)
+            // 새 Kimi 이벤트 직후엔 CLI가 방금 토큰을 갱신했을 가능성이 높아 한도를 바로 조회한다.
+            if kimi.apply(scans.3, into: self.store) { self.pollKimiLimits() }
+            await Self.breathe()
+            await self.finishRefresh()
+            self.scanInFlight = false
+            if self.scanPending {
+                self.scanPending = false
+                self.refresh()
+            }
+        }
+    }
+
+    private static func breathe() async { try? await Task.sleep(for: .milliseconds(4)) }
+
+    private func finishRefresh() async {
         updateStatusTitle()
         evaluateComebackIfDue()
         evaluateEvents()
+        await Self.breathe()
         persistStatsIfDue()
+        await Self.breathe()
         evaluateBriefingIfDue()
     }
 
