@@ -447,6 +447,31 @@ final class MenubarOverlay {
     private var mouseMonitor: Any?
     private var settleCheck: DispatchWorkItem?
     private var placeholderShown = false
+    /// 상태 아이템 창(NSStatusBarWindow) 개수 — 아이템이 메뉴바에 실제로 보일 때는 모니터·스페이스마다 복제 창이 생겨
+    /// 여러 개(실측 19)이고, Hidden Bar 등이 접어서 시스템이 숨기면 복제 창이 모두 사라져 1개만 남는다.
+    /// 창 좌표·가시 상태는 숨겨져도 갱신되지 않아서 이 개수가 유일하게 믿을 수 있는 신호다.
+    /// 지금까지 본 최댓값(peak)이 2 이상인데 1로 줄어 일정 시간 유지되면 "숨겨짐"으로 본다.
+    /// 모니터 구성(개수·크기)이 실제로 바뀌면 기준을 다시 학습한다 (복제 창 수가 달라지므로).
+    /// 화면 구성 *알림*으로는 재학습하면 안 된다 — Hidden Bar가 접고 펼 때도 알림이 와서 기준이 매번 지워진다.
+    private var peakReplicas = 0
+    private var singleSince: Date?
+    private var screenSignature = ""
+    private static let hiddenConfirmTime: TimeInterval = 0.5
+
+    private func statusWindowCount() -> Int {
+        NSApp.windows.filter { String(describing: type(of: $0)) == "NSStatusBarWindow" }.count
+    }
+
+    /// true면 시스템이 아이템을 숨긴 것이다 (좌표가 멀쩡해 보여도 오버레이를 내려야 한다).
+    private func hiddenBySystem(now: Date) -> Bool {
+        let signature = NSScreen.screens.map { "\($0.frame)" }.joined(separator: "|")
+        if signature != screenSignature { screenSignature = signature; peakReplicas = 0; singleSince = nil }
+        let n = statusWindowCount()
+        peakReplicas = max(peakReplicas, n)
+        guard peakReplicas > 1, n == 1 else { singleSince = nil; return false }
+        if singleSince == nil { singleSince = now }
+        return now.timeIntervalSince(singleSince!) >= Self.hiddenConfirmTime
+    }
     private var dragging = false
     private var dragStartedAt = Date.distantPast
 
@@ -543,6 +568,11 @@ final class MenubarOverlay {
             primarySeenAt = now
         }
         hideDragPlaceholder()
+        if hiddenBySystem(now: now) {
+            primaryFrame = nil
+            panel.orderOut(nil)
+            return
+        }
         guard let pf = primaryFrame, now.timeIntervalSince(primarySeenAt) < 8 else {
             panel.orderOut(nil)
             return
