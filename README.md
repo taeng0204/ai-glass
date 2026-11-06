@@ -64,6 +64,7 @@ AI Glass instead reserves the space with the status item and draws the pill in a
 
 - The overlay is drawn on the **main display's** menu bar only. On secondary displays macOS shows an empty slot where the item is.
 - When macOS hides the item (for example, the frontmost app's menus are too long) the overlay hides with it.
+- **Menu bar managers (Hidden Bar, Bartender, …) need the app in `/Applications`.** On macOS 27, macOS only recognizes the owner of a menu bar item when the app lives in `/Applications`; from anywhere else (a build folder, `~/Applications`, Downloads) the item has no identity, so a manager's "keep these visible" list can never match it and the pill is hidden whenever the bar is collapsed. The one-line installer puts the app in `/Applications`.
 
 ## Screenshots
 
