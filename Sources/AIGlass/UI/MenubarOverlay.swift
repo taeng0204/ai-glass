@@ -509,19 +509,26 @@ final class MenubarOverlay {
         observe(win)
         let f = win.frame
         let now = Date()
-        recentFrames.append((now, f))
-        recentFrames.removeAll { now.timeIntervalSince($0.at) > Self.flapWindow }
-        if f != stableFrame { stableFrame = f; stableSince = now }
-        let flapping = recentFrames.contains { $0.frame != f }
-        let settled = now.timeIntervalSince(stableSince) >= Self.settleTime
-        if flapping || !settled {
-            // 흔들리거나 막 바뀐 좌표는 믿지 않는다 — 숨기고, 안정될 즈음 다시 확인한다.
-            if flapping {
-                panel.orderOut(nil)
-                showDragPlaceholder()
+        // 화면 밖·화면 없음·높이 0 같은 값은 시스템이 가끔(7~10초마다) 순간적으로 내보내는 노이즈다 —
+        // 흔들림 판단에서 뺀다 (섞으면 알약이 주기적으로 깜빡인다). 드래그는 두 값이 모두 메뉴바 안인 경우만 센다.
+        let plausible = win.screen != nil && f.height > 1 && f.width > 1
+            && NSScreen.screens.contains { $0.frame.origin == .zero && f.midY > $0.visibleFrame.maxY && f.midY < $0.frame.maxY
+                && f.midX > $0.frame.minX && f.midX < $0.frame.maxX }
+        if plausible {
+            recentFrames.append((now, f))
+            recentFrames.removeAll { now.timeIntervalSince($0.at) > Self.flapWindow }
+            if f != stableFrame { stableFrame = f; stableSince = now }
+            let flapping = recentFrames.contains { $0.frame != f }
+            let settled = now.timeIntervalSince(stableSince) >= Self.settleTime
+            if flapping || !settled {
+                // 흔들리거나 막 바뀐 좌표는 믿지 않는다 — 숨기고, 안정될 즈음 다시 확인한다.
+                if flapping {
+                    panel.orderOut(nil)
+                    showDragPlaceholder()
+                }
+                scheduleSettleCheck(after: Self.settleTime + 0.05)
+                return
             }
-            scheduleSettleCheck(after: Self.settleTime + 0.05)
-            return
         }
         if dragging, now.timeIntervalSince(dragStartedAt) < 8 { return }
         dragging = false   // 버튼을 아직 누르고 있다 — 놓을 때까지 숨김 유지
