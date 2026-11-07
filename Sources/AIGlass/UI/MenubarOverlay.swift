@@ -16,6 +16,8 @@ final class MenubarOverlay {
     private let settings: AppSettings
     private weak var item: NSStatusItem?
     private var timer: Timer?
+    private var missionTimer: Timer?
+    private var missionControlUp = false
     private var observers: [NSObjectProtocol] = []
     private weak var observedWindow: NSWindow?
 
@@ -162,6 +164,13 @@ final class MenubarOverlay {
         RunLoop.main.add(t, forMode: .common)
         timer = t
 
+        // 미션 컨트롤은 알림이 없어 짧은 주기로 확인한다 (창 목록 조회만 하는 가벼운 검사).
+        let mc = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkMissionControl() }
+        }
+        RunLoop.main.add(mc, forMode: .common)
+        missionTimer = mc
+
         observers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in MainActor.assumeIsolated { self?.syncPanel() } })
@@ -170,6 +179,7 @@ final class MenubarOverlay {
     /// 오버레이 해제 — 투명 창과 타이머·관찰자를 정리한다.
     func stop() {
         timer?.invalidate(); timer = nil
+        missionTimer?.invalidate(); missionTimer = nil
         for o in observers { NotificationCenter.default.removeObserver(o) }
         observers.removeAll()
         panel.orderOut(nil)
@@ -529,7 +539,28 @@ final class MenubarOverlay {
     /// (예: 메인 (1202, 1073) ↔ 보조 모니터 (846, -32)). 오버레이는 메인 화면에만 그리므로, 메인 화면의 메뉴바 띠 안에서
     /// 보고된 위치만 기억해 쓴다. 메인 위치가 한동안(8초) 안 보이면 아이템이 숨겨진 것(앞 앱 메뉴가 길어 공간 부족 등)이라
     /// 패널도 숨긴다. 보조 모니터의 복제본은 오버레이를 그리지 않아 빈 자리로 보인다.
+    /// 미션 컨트롤·앱 익스포제·런치패드가 떠 있으면 Dock이 화면 전체를 덮는 창(레이어 20)을 만든다.
+    /// 이때 시스템은 메뉴바 아이템을 모두 숨기므로 오버레이도 내려야 한다 (평소엔 이런 창이 없다).
+    private func missionControlActive() -> Bool {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else { return false }
+        for w in list where (w[kCGWindowOwnerName as String] as? String) == "Dock" && (w[kCGWindowLayer as String] as? Int ?? 0) >= 20 {
+            guard let b = w[kCGWindowBounds as String] as? [String: CGFloat],
+                  let x = b["X"], let y = b["Y"], let width = b["Width"], let height = b["Height"] else { continue }
+            let rect = CGRect(x: x, y: y, width: width, height: height)
+            if NSScreen.screens.contains(where: { $0.frame.width <= rect.width + 1 && $0.frame.height <= rect.height + 1 && rect.width > 600 && rect.height > 600 }) { return true }
+        }
+        return false
+    }
+
+    private func checkMissionControl() {
+        let up = missionControlActive()
+        guard up != missionControlUp else { return }
+        missionControlUp = up
+        if up { panel.orderOut(nil) } else { syncPanel() }
+    }
+
     private func syncPanel() {
+        if missionControlUp { panel.orderOut(nil); return }
         guard let button = item?.button, let win = button.window else { panel.orderOut(nil); return }
         observe(win)
         let f = win.frame
