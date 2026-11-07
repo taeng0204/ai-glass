@@ -159,8 +159,6 @@ struct HUDView: View {
         ZStack(alignment: .topTrailing) {
             if let event = state.currentEvent {
                 EventCard(event: event, warn: settings.warnThreshold, crit: settings.critThreshold)
-                    .contentShape(RoundedRectangle(cornerRadius: 18))
-                    .onTapGesture { tapped() }
             } else if !settings.hudVisible {
                 // 알림 전용 모드 — 카드 dismiss 후 패널이 숨겨질 때까지 빈 상태 유지.
                 Color.clear.frame(width: 1, height: 1)
@@ -173,10 +171,9 @@ struct HUDView: View {
                          showsPercent: settings.hudShowsPercent,
                          showsCountdown: settings.hudShowsCountdown,
                          waveStyle: settings.waveStyle)
-                    .contentShape(RoundedRectangle(cornerRadius: 22))
-                    .onTapGesture { tapped() }
             }
         }
+        .overlay { HUDDragSurface(onTap: tapped) }
         .scaleEffect(bounce ? 0.94 : 1.0)
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: cornerRadius))
         .onHover { state.setHover($0) }
@@ -360,8 +357,6 @@ struct HoverCard: View {
         .padding(12)
         // 100%와 d-포맷 카운트다운("6d 23h 59m")까지 잘림 없이 들어가도록 폭 확보.
         .frame(width: 238, alignment: .leading)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
-        .onTapGesture { onTap() }
     }
 
     /// 서비스가 가진 윈도우를 표시 순서대로 정렬해 반환.

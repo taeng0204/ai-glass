@@ -27,7 +27,7 @@ final class HUDPanelController {
         panel.backgroundColor = .clear
         panel.hasShadow = false // 그림자는 glassEffect가 그림
         panel.hidesOnDeactivate = false
-        panel.isMovableByWindowBackground = true
+        panel.isMovableByWindowBackground = false   // 이동은 HUDDragSurface가 처리
         panel.contentView = FirstMouseHostingView(
             rootView: HUDView(store: store, state: state, settings: settings, onTap: onTap))
 
