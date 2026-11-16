@@ -591,17 +591,12 @@ final class MenubarOverlay {
     /// (예: 메인 (1202, 1073) ↔ 보조 모니터 (846, -32)). 오버레이는 메인 화면에만 그리므로, 메인 화면의 메뉴바 띠 안에서
     /// 보고된 위치만 기억해 쓴다. 메인 위치가 한동안(8초) 안 보이면 아이템이 숨겨진 것(앞 앱 메뉴가 길어 공간 부족 등)이라
     /// 패널도 숨긴다. 보조 모니터의 복제본은 오버레이를 그리지 않아 빈 자리로 보인다.
-    /// 미션 컨트롤·앱 익스포제·런치패드가 떠 있으면 Dock이 화면 전체를 덮는 창(레이어 20)을 만든다.
-    /// 이때 시스템은 메뉴바 아이템을 모두 숨기므로 오버레이도 내려야 한다 (평소엔 이런 창이 없다).
+    /// 미션 컨트롤(익스포제)이 메인 화면을 덮고 있으면 시스템이 메뉴바 아이템을 숨기므로 오버레이도 내린다.
+    /// 판정은 `MissionControlDetector` — Dock 막대 창(레이어 20)은 Dock이 펼쳐질 때마다 나타나므로 신호로 쓰지 않는다.
     private func missionControlActive() -> Bool {
         guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else { return false }
-        for w in list where (w[kCGWindowOwnerName as String] as? String) == "Dock" && (w[kCGWindowLayer as String] as? Int ?? 0) >= 20 {
-            guard let b = w[kCGWindowBounds as String] as? [String: CGFloat],
-                  let x = b["X"], let y = b["Y"], let width = b["Width"], let height = b["Height"] else { continue }
-            let rect = CGRect(x: x, y: y, width: width, height: height)
-            if NSScreen.screens.contains(where: { $0.frame.width <= rect.width + 1 && $0.frame.height <= rect.height + 1 && rect.width > 600 && rect.height > 600 }) { return true }
-        }
-        return false
+        return MissionControlDetector.isActive(windows: MissionControlDetector.windows(from: list),
+                                               mainDisplay: CGDisplayBounds(CGMainDisplayID()))
     }
 
     private func checkMissionControl() {
