@@ -5,9 +5,14 @@ import Foundation
 /// Hidden Bar 같은 메뉴바 정리 앱이 접을 때 우리 아이템을 허용 목록에서 빼 버린다.
 public final class ClaudeCollector: @unchecked Sendable {
     private let root: URL
+    /// 로그 파일 목록 캐시 — 앱은 FSEvents로 무효화하는 공유 인스턴스를 넘긴다 (RecentFileCache 참고).
+    private let files: RecentFileCache
     private let reader = IncrementalLineReader()
 
-    public init(root: URL) { self.root = root }
+    public init(root: URL, files: RecentFileCache = RecentFileCache()) {
+        self.root = root
+        self.files = files
+    }
 
     @MainActor public func collect(into store: UsageStore) { apply(scan(), into: store) }
 
@@ -17,7 +22,7 @@ public final class ClaudeCollector: @unchecked Sendable {
 
     public func scan() -> [(TokenEvent, String?)] {
         var batch: [(TokenEvent, String?)] = []
-        for file in LogLocator.recentFiles(under: root, suffix: ".jsonl") {
+        for file in files.files(under: root, suffix: ".jsonl") {
             // 토큰 줄만 String으로 만든다 — usage가 없는 줄(대화 본문 등)은 파싱도 안 한다.
             for line in reader.newLines(of: file, containing: "\"usage\"") {
                 if let parsed = ClaudeLogParser.parse(line: line) {
@@ -31,10 +36,15 @@ public final class ClaudeCollector: @unchecked Sendable {
 
 public final class KimiCollector: @unchecked Sendable {
     private let root: URL
+    /// 로그 파일 목록 캐시 — 앱은 FSEvents로 무효화하는 공유 인스턴스를 넘긴다 (RecentFileCache 참고).
+    private let files: RecentFileCache
     private let reader = IncrementalLineReader()
     private var projectCache: [String: String?] = [:]
 
-    public init(root: URL) { self.root = root }
+    public init(root: URL, files: RecentFileCache = RecentFileCache()) {
+        self.root = root
+        self.files = files
+    }
 
     /// wire.jsonl 위치: `<session>/agents/<agent>/wire.jsonl` → 세션 폴더의 state.json에서 cwd를 읽는다.
     private func project(for file: URL) -> String? {
@@ -58,7 +68,7 @@ public final class KimiCollector: @unchecked Sendable {
 
     public func scan() -> [(TokenEvent, String?)] {
         var batch: [(TokenEvent, String?)] = []
-        for file in LogLocator.recentFiles(under: root, suffix: "wire.jsonl") {
+        for file in files.files(under: root, suffix: "wire.jsonl") {
             let proj = project(for: file)
             let fileKey = file.deletingLastPathComponent().deletingLastPathComponent()
                 .deletingLastPathComponent().lastPathComponent
@@ -74,12 +84,17 @@ public final class KimiCollector: @unchecked Sendable {
 
 public final class CodexCollector: @unchecked Sendable {
     private let root: URL
+    /// 로그 파일 목록 캐시 — 앱은 FSEvents로 무효화하는 공유 인스턴스를 넘긴다 (RecentFileCache 참고).
+    private let files: RecentFileCache
     private let reader = IncrementalLineReader()
     private var latestLimitsTimestamp: Date = .distantPast
     /// 파일 path → project name 캐시 (session_meta 기반).
     private var projectCache: [String: String?] = [:]
 
-    public init(root: URL) { self.root = root }
+    public init(root: URL, files: RecentFileCache = RecentFileCache()) {
+        self.root = root
+        self.files = files
+    }
 
     private func project(for file: URL) -> String? {
         let path = file.path
@@ -104,7 +119,7 @@ public final class CodexCollector: @unchecked Sendable {
     public func scan() -> Scan {
         var batch: [(TokenEvent, String?)] = []
         var latestLimits: [LimitWindow]?
-        for file in LogLocator.recentFiles(under: root, suffix: ".jsonl") {
+        for file in files.files(under: root, suffix: ".jsonl") {
             let proj = project(for: file)
             // token_count 줄만 읽는다 — 세션 로그의 대부분(도구 출력·대화)은 건너뛴다.
             for line in reader.newLines(of: file, containing: "\"token_count\"") {
@@ -136,6 +151,8 @@ public final class CodexCollector: @unchecked Sendable {
 
 public final class GeminiCollector: @unchecked Sendable {
     private let root: URL
+    /// 로그 파일 목록 캐시 — 앱은 FSEvents로 무효화하는 공유 인스턴스를 넘긴다 (RecentFileCache 참고).
+    private let files: RecentFileCache
     private let dailyQuota: Int
     /// Antigravity(agy) CLI 히스토리 파일. 작아서 매번 전체 재읽기.
     private let historyFile: URL
@@ -158,8 +175,9 @@ public final class GeminiCollector: @unchecked Sendable {
     public var publishesDailyEstimate = true
 
     public init(root: URL, dailyQuota: Int = 1000, historyFile: URL? = nil, logDir: URL? = nil,
-                conversationsDir: URL? = nil) {
+                conversationsDir: URL? = nil, files: RecentFileCache = RecentFileCache()) {
         self.root = root
+        self.files = files
         self.dailyQuota = dailyQuota
         self.historyFile = historyFile
             ?? FileManager.default.homeDirectoryForCurrentUser
@@ -201,7 +219,7 @@ public final class GeminiCollector: @unchecked Sendable {
         } else {
             allDates = []
             // 기존 Gemini CLI 로그 (logs.json)
-            for file in LogLocator.recentFiles(under: root, suffix: "logs.json", modifiedWithinDays: 8) {
+            for file in files.files(under: root, suffix: "logs.json", modifiedWithinDays: 8) {
                 guard let data = try? Data(contentsOf: file) else { continue }
                 allDates.append(contentsOf: GeminiLogParser.userMessageDates(jsonData: data))
             }
@@ -229,7 +247,7 @@ public final class GeminiCollector: @unchecked Sendable {
         var projectMap: [String: String]?
 
         var batch: [(TokenEvent, String?)] = []
-        for file in LogLocator.recentFiles(under: conversationsDir, suffix: ".db", modifiedWithinDays: 8) {
+        for file in files.files(under: conversationsDir, suffix: ".db", modifiedWithinDays: 8) {
             let convId = (file.lastPathComponent as NSString).deletingPathExtension
             let path = file.path
             // 파싱 전 시그니처를 떠서, 변경 없는 db는 통째로 스킵 (파싱 중 쓰기는 다음 주기에 잡힘).
@@ -292,8 +310,8 @@ public final class GeminiCollector: @unchecked Sendable {
 
     /// 요청 집계 소스(logs.json·log·history)의 mtime 최댓값 — 변경 없으면 재파싱 스킵용.
     private func requestSourcesSignature() -> Date? {
-        var paths = LogLocator.recentFiles(under: root, suffix: "logs.json", modifiedWithinDays: 8).map(\.path)
-        paths += LogLocator.recentFiles(under: logDir, suffix: ".log", modifiedWithinDays: 8).map(\.path)
+        var paths = files.files(under: root, suffix: "logs.json", modifiedWithinDays: 8).map(\.path)
+        paths += files.files(under: logDir, suffix: ".log", modifiedWithinDays: 8).map(\.path)
         paths.append(historyFile.path)
         var latest: Date?
         for p in paths {
@@ -320,7 +338,7 @@ public final class GeminiCollector: @unchecked Sendable {
 
     private func antigravityModelRequestDates() -> [Date] {
         var dates: [Date] = []
-        for file in LogLocator.recentFiles(under: logDir, suffix: ".log", modifiedWithinDays: 8) {
+        for file in files.files(under: logDir, suffix: ".log", modifiedWithinDays: 8) {
             guard let (year, month) = Self.yearMonth(fromLogFilename: file.lastPathComponent),
                   let data = try? Data(contentsOf: file) else { continue }
             dates.append(contentsOf: AntigravityLogParser.modelRequestDates(

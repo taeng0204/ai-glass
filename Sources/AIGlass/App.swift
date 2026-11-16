@@ -88,15 +88,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var settingsWindow: NSWindow?
     /// 온보딩 위저드 창 (중복 생성 방지).
     private var onboardingWindow: NSWindow?
+    /// 수집기들이 공유하는 로그 파일 목록 캐시. 목록을 바꾸는 FSEvents 이벤트가 오면 해당 목록만 비운다.
+    let logFiles = RecentFileCache()
     lazy var claudeCollector = ClaudeCollector(
-        root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects"))
+        root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects"),
+        files: logFiles)
     lazy var codexCollector = CodexCollector(
-        root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/sessions"))
+        root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/sessions"),
+        files: logFiles)
     lazy var kimiCollector = KimiCollector(
-        root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".kimi-code/sessions"))
+        root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".kimi-code/sessions"),
+        files: logFiles)
     lazy var geminiCollector = GeminiCollector(
         root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".gemini/tmp"),
-        dailyQuota: settings.geminiDailyQuota)
+        dailyQuota: settings.geminiDailyQuota,
+        files: logFiles)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -162,8 +168,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             home + "/.gemini/tmp",
             home + "/.gemini/antigravity-cli",
             home + "/.kimi-code/sessions",
-        ]) { [weak self] in
-            MainActor.assumeIsolated { self?.refresh() }
+        ]) { [weak self] events in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                for e in events { self.logFiles.note(path: e.path, flags: e.flags) }
+                self.refresh()
+            }
         }
 
         // Claude 한도: 시작 직후에는 Keychain 허용 타이밍 때문에 짧게 재시도하고, 이후 60초 주기로 유지.
