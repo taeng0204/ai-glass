@@ -19,10 +19,15 @@ final class MenubarOverlay {
     private var missionTimer: Timer?
     private var missionControlUp = false
     private var observers: [NSObjectProtocol] = []
+    /// NSWorkspace 알림 센터 관찰자 (해제할 때 다른 센터에서 빼야 해서 따로 둔다).
+    private var workspaceObservers: [NSObjectProtocol] = []
+    private var spaceCheck: DispatchWorkItem?
     private weak var observedWindow: NSWindow?
 
-    private let panel: NSPanel
+    /// 그리는 투명 창. 창 서버가 이 창을 한 스페이스에 묶어 버리면 새로 만들어 바꾼다 (`recoverIfOffSpace`).
+    private var panel: NSPanel
     private let root = PassThroughView()
+    private var offSpace = OffSpaceRecovery()
 
     // 웨이브 (스타일별 렌더러 — MenubarWaves.swift)
     private var renderer: WaveRenderer?
@@ -101,15 +106,7 @@ final class MenubarOverlay {
         self.settings = settings
         self.item = item
 
-        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 100, height: height),
-                        styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        panel.ignoresMouseEvents = true
-        panel.isReleasedWhenClosed = false
-        panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
+        panel = Self.makePanel(height: height)
 
         item.button?.title = ""
         item.button?.image = nil
@@ -174,14 +171,69 @@ final class MenubarOverlay {
         observers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in MainActor.assumeIsolated { self?.syncPanel() } })
+
+        // 데스크톱(스페이스)을 바꾸면 오버레이가 새 스페이스에도 붙어 있는지 바로 확인한다 (recoverIfOffSpace).
+        // 판단에 확인 시간이 있어 그 직후에 한 번 더 본다 — 1초 주기만 기다리지 않게.
+        workspaceObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.syncPanel()
+                self.spaceCheck?.cancel()
+                let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.syncPanel() } }
+                self.spaceCheck = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + OffSpaceRecovery.confirmTime + 0.1, execute: work)
+            }
+        })
+    }
+
+    /// 오버레이용 투명 창 — 클릭 통과, 상태 아이템 바로 위 레벨, 모든 스페이스.
+    private static func makePanel(height: CGFloat) -> NSPanel {
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 100, height: height),
+                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.isReleasedWhenClosed = false
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
+        return panel
+    }
+
+    /// 보이는 상태인데 현재 스페이스에 없으면 창을 새로 만들어 바꾼다.
+    ///
+    /// 실측(macOS 27, 9일 연속 실행): 창 서버에서 이 창이 스페이스 3개 중 1개에만 소속된 채 굳어, 다른 데스크톱에서는
+    /// 알약이 사라졌다. canJoinAllSpaces·sticky 태그는 그대로였고 AppKit은 isVisible=true라 다시 올리지 않았다.
+    /// orderOut/orderFront나 collectionBehavior 재설정으로는 풀리지 않았고, 같은 프로세스에서 새로 만든 창은 모든 스페이스에
+    /// 정상 소속됐다. 판단 규칙(확인 시간·쿨다운)은 `OffSpaceRecovery`.
+    private func recoverIfOffSpace() {
+        guard offSpace.shouldRebuild(visible: panel.isVisible, onActiveSpace: panel.isOnActiveSpace, now: Date()) else { return }
+        let old = panel
+        let fresh = Self.makePanel(height: height)
+        old.contentView = nil
+        fresh.contentView = root
+        fresh.appearance = old.appearance
+        fresh.setFrame(old.frame, display: false)
+        old.orderOut(nil)
+        old.close()
+        panel = fresh
+        fresh.orderFrontRegardless()
+        // 웨이브 애니메이션은 새 창에서 새로 등록한다 (창을 옮긴 레이어의 애니메이션 유지에 기대지 않음).
+        rendererStyle = nil
+        tick()
     }
 
     /// 오버레이 해제 — 투명 창과 타이머·관찰자를 정리한다.
     func stop() {
         timer?.invalidate(); timer = nil
         missionTimer?.invalidate(); missionTimer = nil
+        spaceCheck?.cancel(); spaceCheck = nil
         for o in observers { NotificationCenter.default.removeObserver(o) }
         observers.removeAll()
+        for o in workspaceObservers { NSWorkspace.shared.notificationCenter.removeObserver(o) }
+        workspaceObservers.removeAll()
         panel.orderOut(nil)
         panel.close()
     }
@@ -560,6 +612,8 @@ final class MenubarOverlay {
     }
 
     private func syncPanel() {
+        // 어느 경로로 끝나든 마지막에 스페이스 소속을 확인한다 (숨긴 경우엔 판단 타이머만 초기화된다).
+        defer { recoverIfOffSpace() }
         if missionControlUp { panel.orderOut(nil); return }
         guard let button = item?.button, let win = button.window else { panel.orderOut(nil); return }
         observe(win)
