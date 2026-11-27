@@ -275,6 +275,9 @@ struct OnboardingView: View {
         case .gemini:
             return fm.fileExists(atPath: home.appendingPathComponent(".gemini").path)
                 || fm.fileExists(atPath: home.appendingPathComponent(".gemini/antigravity-cli").path)
+        case .glm:
+            // GLM은 Claude Code를 Z.ai로 돌리는 방식이라 전용 폴더가 없다 — Z.ai를 가리키는 Claude Code 설정으로 판단.
+            return ZaiConfig.find(home: home) != nil
         }
     }
 

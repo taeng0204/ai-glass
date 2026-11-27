@@ -1,7 +1,7 @@
 import Foundation
 
 public enum ServiceID: String, CaseIterable, Codable, Sendable, Identifiable {
-    case claude, codex, gemini, kimi
+    case claude, codex, gemini, kimi, glm
     public var id: String { rawValue }
     public var displayName: String {
         switch self {
@@ -9,6 +9,7 @@ public enum ServiceID: String, CaseIterable, Codable, Sendable, Identifiable {
         case .codex: return "Codex"
         case .gemini: return "Antigravity"
         case .kimi: return "Kimi"
+        case .glm: return "GLM"
         }
     }
 }

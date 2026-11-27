@@ -31,7 +31,7 @@ public struct ClaudeCredentials {
     /// 갱신해 항목 ACL이 초기화될 때마다 "AI Glass wants to access key…" 암호창이 떠서 메인 스레드를 막는다.
     /// - Parameter allowDirectKeychain: `security` 도구로 못 읽었을 때 SecItem 직접 읽기로 폴백(대화상자가 뜰 수 있음). 기본 false.
     public static func fromKeychain(allowDirectKeychain: Bool = false) -> ClaudeCredentials? {
-        if let data = readKeychainDataWithSecurityTool() {
+        if let data = SecurityTool.findGenericPassword(service: "Claude Code-credentials") {
             return parse(data)
         }
         guard allowDirectKeychain else { return nil }
@@ -59,35 +59,6 @@ public struct ClaudeCredentials {
             return nil
         }
         return data
-    }
-
-    /// macOS `security` 도구로 항목을 읽는다 (암호창 없이 읽히는 기본 경로). 2초 안에 못 읽으면 포기한다.
-    private static func readKeychainDataWithSecurityTool() -> Data? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-        process.arguments = ["find-generic-password", "-w", "-s", "Claude Code-credentials"]
-
-        let stdout = Pipe()
-        process.standardOutput = stdout
-        process.standardError = Pipe()
-
-        do {
-            try process.run()
-        } catch {
-            return nil
-        }
-
-        let deadline = Date().addingTimeInterval(2)
-        while process.isRunning, Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.02)
-        }
-        if process.isRunning {
-            process.terminate()
-            return nil
-        }
-        guard process.terminationStatus == 0 else { return nil }
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        return data.isEmpty ? nil : data
     }
 }
 

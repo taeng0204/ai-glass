@@ -5,7 +5,7 @@
 <h1 align="center">AI Glass</h1>
 
 <p align="center">
-  Claude Code · Codex · Antigravity · Kimi Code 사용량을 <b>liquid glass</b>로 보여주는 macOS 메뉴바 앱
+  Claude Code · Codex · Antigravity · Kimi Code · GLM 사용량을 <b>liquid glass</b>로 보여주는 macOS 메뉴바 앱
 </p>
 
 <p align="center">
@@ -34,7 +34,7 @@ curl -fsSL https://raw.githubusercontent.com/taeng0204/ai-glass/main/install.sh 
 
 최신 릴리스를 받아 `/Applications`에 설치하고 바로 실행합니다. 또는 [Releases](https://github.com/taeng0204/ai-glass/releases)에서 zip을 직접 받아 `/Applications`에 넣어도 됩니다 (이 경우 최초 실행은 **우클릭 → 열기** — 릴리스 빌드는 ad-hoc 서명이라 Gatekeeper 확인이 한 번 필요합니다).
 
-> 요구사항: **macOS 26 (Tahoe) 이상** — 네이티브 liquid glass API를 사용합니다. Claude Code / Codex / Antigravity(`agy`) / Kimi Code 중 1개 이상 사용 이력이 있으면 됩니다.
+> 요구사항: **macOS 26 (Tahoe) 이상** — 네이티브 liquid glass API를 사용합니다. Claude Code / Codex / Antigravity(`agy`) / Kimi Code / GLM(Z.ai GLM Coding Plan으로 쓰는 Claude Code) 중 1개 이상 사용 이력이 있으면 됩니다.
 
 ## 기능
 
@@ -55,6 +55,7 @@ curl -fsSL https://raw.githubusercontent.com/taeng0204/ai-glass/main/install.sh 
 | **Codex** | 세션 로그의 rate limit 스냅샷. 창 길이로 종류를 판별하므로 **주간 전용 요금제**(예: Pro)는 가짜 5h 게이지 대신 주간 게이지로 표시 |
 | **Antigravity** | `agy -p "/usage"`로 가져온 **Gemini 4 Argon** 그룹의 실제 쿼터(5h / 주간). `agy`가 없거나 30분 넘게 실패하면 요청 수 기반 일일 추정 게이지로 대체 |
 | **Kimi Code** | Kimi 사용량 API의 5h / 주간 / 월간 한도 (아래 주의 참고) + 세션 로그의 토큰 사용량 |
+| **GLM** | Z.ai 한도 API의 GLM Coding Plan 5h / 주간 한도 + Claude Code 로그(모델이 `glm-*`인 줄)의 토큰 사용량 |
 
 ## 메뉴바 렌더링 (GPU)
 
@@ -93,22 +94,23 @@ AI Glass는 상태 아이템으로 자리만 잡고, 그 위에 겹친 투명한
 
 ## 데이터 소스 & 프라이버시
 
-모든 처리는 **로컬**에서 이루어지며 텔레메트리는 없습니다. 앱이 직접 보내는 외부 네트워크 요청은 세 가지뿐입니다 — Claude 한도 조회용 Anthropic 사용량 API, Kimi 한도 조회용 Kimi 사용량 API, 새 버전 확인용 GitHub Releases API(하루 1회). Antigravity 쿼터를 위해 앱이 실행하는 `agy` CLI는 자체적으로 Google과 통신합니다.
+모든 처리는 **로컬**에서 이루어지며 텔레메트리는 없습니다. 앱이 직접 보내는 외부 네트워크 요청은 네 가지뿐입니다 — Claude 한도 조회용 Anthropic 사용량 API, Kimi 한도 조회용 Kimi 사용량 API, GLM 한도 조회용 Z.ai 한도 API, 새 버전 확인용 GitHub Releases API(하루 1회). Antigravity 쿼터를 위해 앱이 실행하는 `agy` CLI는 자체적으로 Google과 통신합니다.
 
 - **Claude**: `~/.claude/projects/**/*.jsonl` (토큰·모델·프로젝트) + Keychain의 Claude Code OAuth 토큰 → 사용량 API (정확한 5h/주간 %). 토큰은 해당 Keychain 항목이 이미 신뢰하는 macOS `security` 도구로 읽기 때문에 **암호 다이얼로그가 뜨지 않습니다.**
 - **Codex**: `~/.codex/sessions/**/*.jsonl` (rate limit 스냅샷 + 토큰 + 프로젝트)
 - **Antigravity**: `~/.gemini/antigravity-cli/history.jsonl` (요청 수·프로젝트) + `conversations/*.db` (SQLite 대화 DB의 protobuf 메타데이터에서 입·출력 토큰을 **추정** — 비공개 포맷이라 방어적으로 파싱하며 결과는 추정치로 취급). 한도는 5분마다 `agy -p "/usage"`를 실행해 가져옵니다 (모델 호출 없음, 인증은 CLI가 처리).
 - **Kimi Code**: `~/.kimi-code/sessions/**/wire.jsonl` (`usage.record` 이벤트, 프로젝트는 세션의 `state.json`에서). 한도는 Kimi CLI의 OAuth 토큰으로 `GET {base_url}/usages`를 호출해 가져옵니다. 이 토큰은 수명이 약 15분이고 CLI가 갱신하므로 **Kimi CLI를 실제로 쓰는 동안에만 한도가 갱신**되고, 그 외에는 마지막 값을 유지합니다.
+- **GLM**: Claude Code를 Z.ai로 돌리면(`ANTHROPIC_BASE_URL`이 `api.z.ai` 또는 `open.bigmodel.cn`) 로그가 같은 `~/.claude/projects`에 쌓입니다. 모델명이 `glm`으로 시작하는 줄은 Claude가 아니라 GLM으로 셉니다. 한도는 `GET https://api.z.ai/api/monitor/usage/quota/limit`(5h·주간 크레딧 창)에서 가져옵니다. 키는 `~/.claude/*.json` 중 Z.ai를 가리키는 Claude Code 설정 파일에서 찾습니다. `ANTHROPIC_AUTH_TOKEN`이 있으면 그 값을 쓰고, `apiKeyHelper`가 `security find-generic-password -s <이름> -w` 형태면 앱이 `security` 도구로 그 항목을 직접 읽습니다. 다른 형태의 `apiKeyHelper` 명령은 **실행하지 않으므로**, 그 경우에는 GLM 한도가 표시되지 않습니다.
 - 일별 통계는 `~/Library/Application Support/AIGlass/stats.db` (SQLite)에 저장
   라이브 화면은 최근 8일만 메모리에 두지만, 첫 실행 때(그리고 파서가 바뀌는 업그레이드 후)에는 **최대 110일치 로그를 백그라운드에서 한 번 통계 DB에 채웁니다.** 그래서 30일 추이와 잔디가 하루씩 쌓이길 기다리지 않고 바로 채워집니다.
 
-비용 표시는 **API 단가 환산 추정치**입니다 — 구독 플랜 실비가 아닙니다. 정액제인 Kimi Code는 입력/출력 100만 토큰당 $2 / $10, 캐시 읽기는 10%로 가정합니다.
+비용 표시는 **API 단가 환산 추정치**입니다 — 구독 플랜 실비가 아닙니다. 정액제인 Kimi Code는 입력/출력 100만 토큰당 $2 / $10, 캐시 읽기는 10%로 가정합니다. GLM은 GLM-5.3 공개 API 단가 $1.40 / $4.40을 씁니다.
 
 ## 소스에서 빌드
 
 ```bash
 git clone https://github.com/taeng0204/ai-glass.git && cd ai-glass
-swift test                 # 단위 테스트 (264개)
+swift test                 # 단위 테스트 (277개)
 swift run AIGlass          # 개발 실행 (자동시작·알림은 .app 번들 전용)
 bash Scripts/make-app.sh   # .app 번들 생성 → build/AIGlass.app
 swift run AIGlass --check-claude   # Claude 한도 API 연결 진단

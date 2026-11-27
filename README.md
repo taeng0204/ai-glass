@@ -5,7 +5,7 @@
 <h1 align="center">AI Glass</h1>
 
 <p align="center">
-  A macOS menu bar app that shows your <b>Claude Code · Codex · Antigravity · Kimi Code</b> usage in <b>liquid glass</b>
+  A macOS menu bar app that shows your <b>Claude Code · Codex · Antigravity · Kimi Code · GLM</b> usage in <b>liquid glass</b>
 </p>
 
 <p align="center">
@@ -34,7 +34,7 @@ curl -fsSL https://raw.githubusercontent.com/taeng0204/ai-glass/main/install.sh 
 
 This downloads the latest release, installs it into `/Applications` and launches it. You can also grab the zip from [Releases](https://github.com/taeng0204/ai-glass/releases) and drop it into `/Applications` (the first launch then needs **right-click → Open**, because release builds are ad-hoc signed and Gatekeeper asks once).
 
-> Requirements: **macOS 26 (Tahoe) or later** — the app uses the native liquid glass APIs. You need a usage history with at least one of Claude Code, Codex, Antigravity (`agy`) or Kimi Code.
+> Requirements: **macOS 26 (Tahoe) or later** — the app uses the native liquid glass APIs. You need a usage history with at least one of Claude Code, Codex, Antigravity (`agy`), Kimi Code or GLM (Claude Code on the Z.ai GLM Coding Plan).
 
 ## Features
 
@@ -55,6 +55,7 @@ This downloads the latest release, installs it into `/Applications` and launches
 | **Codex** | Rate-limit snapshots from the session logs. Windows are classified by their length, so **weekly-only plans** (e.g. Pro) show a weekly gauge instead of a bogus 5h one |
 | **Antigravity** | Real quota from `agy -p "/usage"` for the **Gemini 4 Argon** group (5h / weekly). If `agy` is missing or fails for 30 minutes, it falls back to an estimated daily-request gauge |
 | **Kimi Code** | 5h / weekly / monthly limits from the Kimi usage API (see the caveat below) + token usage from the session logs |
+| **GLM** | 5h / weekly limits of the Z.ai GLM Coding Plan from its quota API + token usage from the Claude Code logs (lines whose model is `glm-*`) |
 
 ## Menu bar rendering (GPU)
 
@@ -93,22 +94,23 @@ AI Glass instead reserves the space with the status item and draws the pill in a
 
 ## Data sources & privacy
 
-Everything is processed **locally** and there is no telemetry. The app itself makes only three kinds of network requests: the Anthropic usage API (Claude limits), the Kimi usage API (Kimi limits) and the GitHub Releases API (update check, once a day). The `agy` CLI, which the app runs for Antigravity quota, talks to Google on its own.
+Everything is processed **locally** and there is no telemetry. The app itself makes only four kinds of network requests: the Anthropic usage API (Claude limits), the Kimi usage API (Kimi limits), the Z.ai quota API (GLM limits) and the GitHub Releases API (update check, once a day). The `agy` CLI, which the app runs for Antigravity quota, talks to Google on its own.
 
 - **Claude** — `~/.claude/projects/**/*.jsonl` (tokens, model, project) plus the Claude Code OAuth token from the Keychain for the usage API (exact 5h / weekly %). The token is read through the macOS `security` tool, which is already trusted by that Keychain item, so **no password dialog appears**.
 - **Codex** — `~/.codex/sessions/**/*.jsonl` (rate-limit snapshots, tokens, project).
 - **Antigravity** — `~/.gemini/antigravity-cli/history.jsonl` (request count, project) and `conversations/*.db` (**estimated** input / output tokens from the protobuf metadata of the SQLite conversation DB — a private format, parsed defensively and treated as an estimate). Limits come from running `agy -p "/usage"` every 5 minutes (no model call; the CLI handles its own auth).
 - **Kimi Code** — `~/.kimi-code/sessions/**/wire.jsonl` (`usage.record` events; the project comes from the session's `state.json`). Limits come from `GET {base_url}/usages` with the Kimi CLI's OAuth token. That token only lives for about 15 minutes and is refreshed by the CLI, so **limits update only while you are actively using the Kimi CLI**; otherwise the last known values are kept.
+- **GLM** — when Claude Code runs against Z.ai (`ANTHROPIC_BASE_URL` = `api.z.ai` or `open.bigmodel.cn`), its logs land in the same `~/.claude/projects` folder; lines whose model starts with `glm` are counted as GLM instead of Claude. Limits come from `GET https://api.z.ai/api/monitor/usage/quota/limit` (5h and weekly credit windows). The key is taken from the Claude Code settings file under `~/.claude/*.json` that points at Z.ai: `ANTHROPIC_AUTH_TOKEN`, or an `apiKeyHelper` of the form `security find-generic-password -s <name> -w`, which the app reads through the `security` tool itself. Any other `apiKeyHelper` command is **not** run, so no GLM limits are shown in that case.
 - Daily statistics are stored in `~/Library/Application Support/AIGlass/stats.db` (SQLite).
   The live view keeps the last 8 days in memory, but on first launch (and after upgrades that change the parsers) the app **backfills up to 110 days of logs into this database once** in the background, so the 30-day trend and heatmap are filled right away instead of growing day by day.
 
-Cost figures are **API-price estimates**, not what your subscription actually costs. For Kimi Code (a flat-rate subscription) it assumes $2 / $10 per million input / output tokens, with cache reads at 10 %.
+Cost figures are **API-price estimates**, not what your subscription actually costs. For Kimi Code (a flat-rate subscription) it assumes $2 / $10 per million input / output tokens, with cache reads at 10 %. For GLM it uses the public GLM-5.3 API price, $1.40 / $4.40.
 
 ## Build from source
 
 ```bash
 git clone https://github.com/taeng0204/ai-glass.git && cd ai-glass
-swift test                 # unit tests (264)
+swift test                 # unit tests (277)
 swift run AIGlass          # dev run (autostart and notifications need the .app bundle)
 bash Scripts/make-app.sh   # build the .app bundle → build/AIGlass.app
 swift run AIGlass --check-claude   # diagnose the Claude limits API connection

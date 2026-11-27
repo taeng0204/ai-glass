@@ -145,6 +145,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         restoreBriefingState()
+        // GLM 분리 전 버전이 Claude로 저장한 glm-* 통계를 GLM으로 옮긴다 (옮길 게 없으면 아무 일도 안 함).
+        // 첫 refresh의 통계 저장보다 먼저 해야 같은 날 GLM 토큰이 두 서비스에 겹쳐 보이지 않는다.
+        statsStore?.moveGLMRowsOutOfClaude()
         runHistoryBackfillIfNeeded()
 
         // 글로벌 단축키 ⌘⇧U → 팝오버 토글 (Carbon 이벤트는 메인 스레드)
@@ -182,9 +185,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             Task { @MainActor in
                 self?.pollClaudeLimits()
                 self?.pollKimiLimits()
+                self?.pollGLMLimits()
             }
         }
         pollKimiLimits()
+        pollGLMLimits()
         pollAntigravityQuota()
         Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.pollAntigravityQuota() }
@@ -433,6 +438,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                                                               base: KimiUsageAPI.baseURL(home: home)),
                   let self, result.statusCode / 100 == 2, let windows = result.windows else { return }
             self.store.setLimits(windows, for: .kimi)
+            self.updateStatusTitle()
+            self.evaluateEvents()
+        }
+    }
+
+    private var glmLimitInFlight = false
+    /// Z.ai 주소·키 캐시. Keychain에서 키를 읽으려면 프로세스를 띄워야 해서 매 분 다시 읽지 않고, 거부되면 비운다.
+    private var glmCredentials: (config: ZaiConfig, key: String)?
+
+    /// GLM Coding Plan 한도 조회 (5h·주간). GLM은 Claude Code를 Z.ai로 돌리는 방식이라 주소와 키를 Claude Code 설정
+    /// (`~/.claude/*.json`)에서 찾는다. 설정 파일 읽기와 Keychain 조회는 백그라운드에서 한다.
+    func pollGLMLimits() {
+        guard settings.enabledServices.contains(.glm), !glmLimitInFlight else { return }
+        glmLimitInFlight = true
+        let cached = glmCredentials
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        Task { @MainActor [weak self] in
+            defer { self?.glmLimitInFlight = false }
+            let creds: (config: ZaiConfig, key: String)?
+            if let cached {
+                creds = cached
+            } else {
+                creds = await Task.detached(priority: .utility) { () -> (config: ZaiConfig, key: String)? in
+                    guard let config = ZaiConfig.find(home: home), let key = config.readKey() else { return nil }
+                    return (config, key)
+                }.value
+            }
+            guard let self, let creds,
+                  let result = try? await ZaiUsageAPI.fetch(key: creds.key, url: creds.config.quotaURL) else { return }
+            // 키가 거부되면(HTTP 401/403, 또는 HTTP 200에 오류 본문) 캐시를 비워 다음 조회 때 설정·Keychain을 다시 읽는다.
+            guard result.statusCode / 100 == 2, let windows = result.windows else {
+                self.glmCredentials = nil
+                return
+            }
+            self.glmCredentials = creds
+            self.store.setLimits(windows, for: .glm)
             self.updateStatusTitle()
             self.evaluateEvents()
         }

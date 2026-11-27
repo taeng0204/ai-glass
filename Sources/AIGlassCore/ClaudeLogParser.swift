@@ -13,6 +13,11 @@ public enum ClaudeLogParser {
         return last.isEmpty ? nil : last
     }
 
+    /// Claude Code를 Z.ai(GLM Coding Plan)로 돌리면 로그는 같은 폴더에 쌓이고 모델명만 `glm-*`이다 → GLM으로 센다.
+    static func service(forModel model: String) -> ServiceID {
+        model.lowercased().hasPrefix("glm") ? .glm : .claude
+    }
+
     /// 한 JSONL 라인 → 토큰 이벤트. usage가 없는 라인(user 메시지 등)은 nil.
     /// JSONSerialization이 만드는 임시 객체(NSDictionary 등)가 호출자의 autorelease 풀에 쌓였다가 한꺼번에 풀리지 않도록
     /// 줄마다 풀을 비운다 (시작 때 수만 줄을 읽는 구간의 피크 메모리가 실측으로 약 80MB 줄었다).
@@ -38,7 +43,7 @@ public enum ClaudeLogParser {
         let project = self.project(forCwd: obj["cwd"] as? String)
 
         let event = TokenEvent(
-            service: .claude,
+            service: service(forModel: model),
             timestamp: timestamp,
             model: model,
             inputTokens: intValue("input_tokens"),

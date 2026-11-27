@@ -142,6 +142,29 @@ public final class DailyStatsStore {
         return Self.dayFormatter.string(from: start)
     }
 
+    /// GLM 분리 전 버전은 Claude Code 로그의 `glm-*` 모델 줄을 Claude로 저장했다. 그 행을 GLM으로 옮긴다.
+    /// 새 버전이 이미 같은 키로 GLM 행을 썼을 수 있으므로 upsert와 같은 컬럼별 최댓값으로 합친다.
+    /// 옮길 행이 없으면 아무 일도 하지 않으니 시작할 때마다 불러도 된다 (LIKE는 ASCII 대소문자 무시 — 파서와 같음).
+    public func moveGLMRowsOutOfClaude() {
+        let move = """
+        INSERT INTO daily_stats (day, service, model, project, input, output, cache_read, cache_create)
+        SELECT day, 'glm', model, project, input, output, cache_read, cache_create
+        FROM daily_stats WHERE service = 'claude' AND model LIKE 'glm%'
+        ON CONFLICT(day, service, model, project) DO UPDATE SET
+            input = MAX(input, excluded.input),
+            output = MAX(output, excluded.output),
+            cache_read = MAX(cache_read, excluded.cache_read),
+            cache_create = MAX(cache_create, excluded.cache_create);
+        DELETE FROM daily_stats WHERE service = 'claude' AND model LIKE 'glm%';
+        """
+        sqlite3_exec(db, "BEGIN", nil, nil, nil)
+        if sqlite3_exec(db, move, nil, nil, nil) == SQLITE_OK {
+            sqlite3_exec(db, "COMMIT", nil, nil, nil)
+        } else {
+            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+        }
+    }
+
     /// 일별×서비스별 토큰 합계 (tokens = 4컬럼 합). 최근 `days`일.
     /// 반환 순서는 결정적: (day 오름차순, service는 ServiceID.allCases 고정 순).
     /// 차트 스택/시리즈가 렌더마다 뒤바뀌지 않도록 보장한다.
