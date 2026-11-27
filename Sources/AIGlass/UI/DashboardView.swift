@@ -432,7 +432,8 @@ private struct TrendsTab: View {
                 }
             }
             if range == .heatmap, let statsStore {
-                HeatmapView(statsStore: statsStore, enabledServices: settings.enabledServices)
+                // DB 조회는 여기서 body 평가당 1회 (칸마다 다시 읽던 것이 잔디를 열 때 ~1초씩 멈추던 원인).
+                HeatmapView(grid: HeatmapGrid.load(from: statsStore, services: settings.enabledServices))
             } else {
                 chart
             }
